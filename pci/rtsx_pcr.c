@@ -1221,13 +1221,30 @@ static int rtsx_pci_suspend(struct pci_dev *pcidev, pm_message_t state)
 	struct rtsx_pcr *pcr;
 	int ret = 0;
 
+	dev_dbg(&(pcidev->dev), "--> %s\n", __func__);
+
 	pcr = pci_get_drvdata(pcidev);
+
+	flush_workqueue(workqueue);
+	cancel_delayed_work(&pcr->carddet_work);
+	del_timer_sync(&pcr->idle_timer);
+
+	mutex_lock(&pcr->pcr_mutex);
+
+	pcr->ops->turn_off_led(pcr);
+
+	rtsx_pci_writel(pcr, RTSX_BIER, 0);
+	pcr->bier = 0;
+
+	rtsx_pci_write_register(pcr, PETXCFG, 0x08, 0x08);
+	rtsx_pci_write_register(pcr, HOST_SLEEP_STATE, 0x03, 0x02);
 
 	pci_save_state(pcidev);
 	pci_enable_wake(pcidev, pci_choose_state(pcidev, state), 0);
 	pci_disable_device(pcidev);
 	pci_set_power_state(pcidev, pci_choose_state(pcidev, state));
 
+	mutex_unlock(&pcr->pcr_mutex);
 	return ret;
 }
 
@@ -1236,14 +1253,32 @@ static int rtsx_pci_resume(struct pci_dev *pcidev)
 	struct rtsx_pcr *pcr;
 	int ret = 0;
 
+	dev_dbg(&(pcidev->dev), "--> %s\n", __func__);
+
 	pcr = pci_get_drvdata(pcidev);
+
+	mutex_lock(&pcr->pcr_mutex);
 
 	pci_set_power_state(pcidev, PCI_D0);
 	pci_restore_state(pcidev);
 	ret = pci_enable_device(pcidev);
 	if (ret)
-		return ret;
+		goto out;
+	pci_set_master(pcidev);
 
+	ret = rtsx_pci_write_register(pcr, HOST_SLEEP_STATE, 0x03, 0x00);
+	if (ret)
+		goto out;
+
+	ret = rtsx_pci_init_hw(pcr);
+	if (ret)
+		goto out;
+
+	pcr->idle_timer.expires = jiffies + msecs_to_jiffies(200);
+	add_timer(&pcr->idle_timer);
+
+out:
+	mutex_unlock(&pcr->pcr_mutex);
 	return ret;
 }
 
