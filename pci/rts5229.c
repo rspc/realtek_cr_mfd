@@ -108,8 +108,7 @@ static int rts5229_disable_auto_blink(struct rtsx_pcr *pcr)
 	return 0;
 }
 
-const struct pcr_ops rts5229_pcr_ops = {
-	.get_ic_version = rts5229_get_ic_version,
+static const struct pcr_ops rts5229_pcr_ops = {
 	.extra_init_hw = rts5229_extra_init_hw,
 	.optimize_phy = rts5229_optimize_phy,
 	.turn_on_led = rts5229_turn_on_led,
@@ -117,3 +116,100 @@ const struct pcr_ops rts5229_pcr_ops = {
 	.enable_auto_blink = rts5229_enable_auto_blink,
 	.disable_auto_blink = rts5229_disable_auto_blink,
 };
+
+/* SD Pull Control Enable:
+ *     SD_DAT[3:0] ==> pull up
+ *     SD_CD       ==> pull up
+ *     SD_WP       ==> pull up
+ *     SD_CMD      ==> pull up
+ *     SD_CLK      ==> pull down
+ */
+static const u32 rts5229_sd_pull_ctl_enable_tbl1[] = {
+	RTSX_REG_PAIR(CARD_PULL_CTL2, 0xAA),
+	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xE9),
+	0,
+};
+
+/* For RTS5229 version C */
+static const u32 rts5229_sd_pull_ctl_enable_tbl2[] = {
+	RTSX_REG_PAIR(CARD_PULL_CTL2, 0xAA),
+	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xD9),
+	0,
+};
+
+/* SD Pull Control Disable:
+ *     SD_DAT[3:0] ==> pull down
+ *     SD_CD       ==> pull up
+ *     SD_WP       ==> pull down
+ *     SD_CMD      ==> pull down
+ *     SD_CLK      ==> pull down
+ */
+static const u32 rts5229_sd_pull_ctl_disable_tbl1[] = {
+	RTSX_REG_PAIR(CARD_PULL_CTL2, 0x55),
+	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xD5),
+	0,
+};
+
+/* For RTS5229 version C */
+static const u32 rts5229_sd_pull_ctl_disable_tbl2[] = {
+	RTSX_REG_PAIR(CARD_PULL_CTL2, 0x55),
+	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xE5),
+	0,
+};
+
+/* MS Pull Control Enable:
+ *     MS CD       ==> pull up
+ *     others      ==> pull down
+ */
+static const u32 rts5229_ms_pull_ctl_enable_tbl[] = {
+	RTSX_REG_PAIR(CARD_PULL_CTL5, 0x55),
+	RTSX_REG_PAIR(CARD_PULL_CTL6, 0x15),
+	0,
+};
+
+/* MS Pull Control Disable:
+ *     MS CD       ==> pull up
+ *     others      ==> pull down
+ */
+static const u32 rts5229_ms_pull_ctl_disable_tbl[] = {
+	RTSX_REG_PAIR(CARD_PULL_CTL5, 0x55),
+	RTSX_REG_PAIR(CARD_PULL_CTL6, 0x15),
+	0,
+};
+
+static const struct pcr_reg_val rts5229_rval = {
+	.ldo_pwr_mask = LDO3318_PWR_MASK,
+	.ldo_pwr_on = 0x06,
+	.ldo_pwr_off = 0x00,
+	.ldo_pwr_suspend = 0x02,
+
+	.sd_pwr_mask = SD_POWER_MASK,
+	.sd_partial_pwr_on = SD_PARTIAL_POWER_ON,
+	.sd_pwr_on = SD_POWER_ON,
+	.sd_pwr_off = SD_POWER_OFF,
+
+	/* MS card also uses SD power here */
+	.ms_pwr_mask = SD_POWER_MASK,
+	.ms_partial_pwr_on = SD_PARTIAL_POWER_ON,
+	.ms_pwr_on = SD_POWER_ON,
+	.ms_pwr_off = SD_POWER_OFF,
+};
+
+void rts5229_init_params(struct rtsx_pcr *pcr)
+{
+	pcr->extra_caps = EXTRA_CAPS_SD_SDR50 | EXTRA_CAPS_SD_SDR104;
+	pcr->num_slots = 2;
+	pcr->ops = &rts5229_pcr_ops;
+	pcr->rval = &rts5229_rval;
+
+	pcr->ic_version = rts5229_get_ic_version(pcr);
+	if (pcr->ic_version == IC_VER_C) {
+		pcr->sd_pull_ctl_enable_tbl = rts5229_sd_pull_ctl_enable_tbl2;
+		pcr->sd_pull_ctl_disable_tbl = rts5229_sd_pull_ctl_disable_tbl2;
+	} else {
+		pcr->sd_pull_ctl_enable_tbl = rts5229_sd_pull_ctl_enable_tbl1;
+		pcr->sd_pull_ctl_disable_tbl = rts5229_sd_pull_ctl_disable_tbl1;
+	}
+	pcr->ms_pull_ctl_enable_tbl = rts5229_ms_pull_ctl_enable_tbl;
+	pcr->ms_pull_ctl_disable_tbl = rts5229_ms_pull_ctl_disable_tbl;
+}

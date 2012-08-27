@@ -25,7 +25,7 @@
 
 #include <linux/mfd/rtsx_pci.h>
 
-extern const struct pcr_ops rts5209_pcr_ops;
-extern const struct pcr_ops rts5229_pcr_ops;
+void rts5209_init_params(struct rtsx_pcr *pcr);
+void rts5229_init_params(struct rtsx_pcr *pcr);
 
 #endif

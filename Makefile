@@ -4,6 +4,7 @@ BUILD_DIR := /lib/modules/$(shell uname -r)/build/
 
 obj-m += pci/
 obj-m += sdmmc/
+obj-m += memstick/
 
 default:
 	make -C $(BUILD_DIR) SUBDIRS=$(PWD) modules

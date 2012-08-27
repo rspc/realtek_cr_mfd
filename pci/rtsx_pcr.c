@@ -521,34 +521,53 @@ static int rtsx_pci_set_pull_ctl(struct rtsx_pcr *pcr, const u32 *tbl)
 	return 0;
 }
 
-int rtsx_pci_sd_pull_ctl_enable(struct rtsx_pcr *pcr)
+int rtsx_pci_card_pull_ctl_enable(struct rtsx_pcr *pcr, int card)
 {
 	int err;
+	const u32 *tbl;
 
-	err = rtsx_pci_set_pull_ctl(pcr, pcr->sd_pull_ctl_enable_tbl);
+	if (card == RTSX_SD_CARD)
+		tbl = pcr->sd_pull_ctl_enable_tbl;
+	else if (card == RTSX_MS_CARD)
+		tbl = pcr->ms_pull_ctl_enable_tbl;
+	else
+		return -EINVAL;
+
+	err = rtsx_pci_set_pull_ctl(pcr, tbl);
 	if (err < 0)
 		return err;
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(rtsx_pci_sd_pull_ctl_enable);
+EXPORT_SYMBOL_GPL(rtsx_pci_card_pull_ctl_enable);
 
-int rtsx_pci_sd_pull_ctl_disable(struct rtsx_pcr *pcr)
+int rtsx_pci_card_pull_ctl_disable(struct rtsx_pcr *pcr, int card)
 {
 	int err;
+	const u32 *tbl;
 
-	err = rtsx_pci_set_pull_ctl(pcr, pcr->sd_pull_ctl_disable_tbl);
+	if (card == RTSX_SD_CARD)
+		tbl = pcr->sd_pull_ctl_disable_tbl;
+	else if (card == RTSX_MS_CARD)
+		tbl = pcr->ms_pull_ctl_disable_tbl;
+	else
+		return -EINVAL;
+
+
+	err = rtsx_pci_set_pull_ctl(pcr, tbl);
 	if (err < 0)
 		return err;
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(rtsx_pci_sd_pull_ctl_disable);
+EXPORT_SYMBOL_GPL(rtsx_pci_card_pull_ctl_disable);
 
 static void rtsx_pci_enable_bus_int(struct rtsx_pcr *pcr)
 {
-	pcr->bier = TRANS_OK_INT_EN | TRANS_FAIL_INT_EN
-		| SD_INT_EN | SD_OC_INT_EN;
+	pcr->bier = TRANS_OK_INT_EN | TRANS_FAIL_INT_EN | SD_INT_EN;
+
+	if (pcr->num_slots > 1)
+		pcr->bier |= MS_INT_EN;
 
 	/* Enable Bus Interrupt */
 	rtsx_pci_writel(pcr, RTSX_BIER, pcr->bier);
@@ -609,7 +628,12 @@ int rtsx_pci_switch_clock(struct rtsx_pcr *pcr, unsigned int card_clock,
 	clk = card_clock;
 	if (!initial_mode && double_clk)
 		clk = card_clock * 2;
-	dev_dbg(&(pcr->pci->dev), "Internal SSC clock: %dMHz\n", clk);
+	dev_dbg(&(pcr->pci->dev),
+			"Internal SSC clock: %dMHz (cur_clock = %d)\n",
+			clk, pcr->cur_clock);
+
+	if (clk == pcr->cur_clock)
+		return 0;
 
 	N = (u8)(clk - 2);
 	if ((clk <= 2) || (N > max_N))
@@ -661,9 +685,79 @@ int rtsx_pci_switch_clock(struct rtsx_pcr *pcr, unsigned int card_clock,
 	if (err < 0)
 		return err;
 
+	pcr->cur_clock = clk;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(rtsx_pci_switch_clock);
+
+int rtsx_pci_card_power_on(struct rtsx_pcr *pcr, int card)
+{
+	int err;
+	u8 pwr_mask, partial_pwr_on, pwr_on;
+
+	if (card == RTSX_SD_CARD) {
+		pwr_mask = pcr->rval->sd_pwr_mask;
+		partial_pwr_on = pcr->rval->sd_partial_pwr_on;
+		pwr_on = pcr->rval->sd_pwr_on;
+	} else if (card == RTSX_MS_CARD) {
+		pwr_mask = pcr->rval->ms_pwr_mask;
+		partial_pwr_on = pcr->rval->ms_partial_pwr_on;
+		pwr_on = pcr->rval->ms_pwr_on;
+	} else {
+		return -EINVAL;
+	}
+
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
+			pwr_mask, partial_pwr_on);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			pcr->rval->ldo_pwr_mask, pcr->rval->ldo_pwr_suspend);
+	err = rtsx_pci_send_cmd(pcr, 100);
+	if (err < 0)
+		return err;
+
+	/* To avoid too large in-rush current */
+	udelay(150);
+
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL, pwr_mask, pwr_on);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			pcr->rval->ldo_pwr_mask, pcr->rval->ldo_pwr_on);
+	err = rtsx_pci_send_cmd(pcr, 100);
+	if (err < 0)
+		return err;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rtsx_pci_card_power_on);
+
+int rtsx_pci_card_power_off(struct rtsx_pcr *pcr, int card)
+{
+	int err;
+	u8 pwr_mask, pwr_off;
+
+	if (card == RTSX_SD_CARD) {
+		pwr_mask = pcr->rval->sd_pwr_mask;
+		pwr_off = pcr->rval->sd_pwr_off;
+	} else if (card == RTSX_MS_CARD) {
+		pwr_mask = pcr->rval->ms_pwr_mask;
+		pwr_off = pcr->rval->ms_pwr_off;
+	} else {
+		return -EINVAL;
+	}
+
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
+			pwr_mask | PMOS_STRG_MASK, pwr_off | PMOS_STRG_400mA);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			pcr->rval->ldo_pwr_mask, pcr->rval->ldo_pwr_off);
+	err = rtsx_pci_send_cmd(pcr, 100);
+	if (err < 0)
+		return err;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rtsx_pci_card_power_off);
 
 void rtsx_pci_complete_unfinished_transfer(struct rtsx_pcr *pcr)
 {
@@ -736,10 +830,21 @@ static void rtsx_pci_card_detect(struct work_struct *work)
 		if (pcr->need_release & SD_EXIST) {
 			pcr->need_release &= ~SD_EXIST;
 			spin_unlock_irqrestore(&pcr->lock, flags);
-			if (pcr->slots[RTSX_SD_SLOT].p_dev) {
+			if (pcr->slots[RTSX_SD_CARD].p_dev) {
 				platform_device_unregister(
-					pcr->slots[RTSX_SD_SLOT].p_dev);
-				pcr->slots[RTSX_SD_SLOT].p_dev = NULL;
+					pcr->slots[RTSX_SD_CARD].p_dev);
+				pcr->slots[RTSX_SD_CARD].p_dev = NULL;
+			}
+			spin_lock_irqsave(&pcr->lock, flags);
+		}
+
+		if (pcr->need_release & MS_EXIST) {
+			pcr->need_release &= ~MS_EXIST;
+			spin_unlock_irqrestore(&pcr->lock, flags);
+			if (pcr->slots[RTSX_MS_CARD].p_dev) {
+				platform_device_unregister(
+					pcr->slots[RTSX_MS_CARD].p_dev);
+				pcr->slots[RTSX_MS_CARD].p_dev = NULL;
 			}
 			spin_lock_irqsave(&pcr->lock, flags);
 		}
@@ -758,9 +863,20 @@ static void rtsx_pci_card_detect(struct work_struct *work)
 			pcr->need_reset &= ~SD_EXIST;
 			spin_unlock_irqrestore(&pcr->lock, flags);
 
-			pcr->slots[RTSX_SD_SLOT].p_dev =
+			pcr->slots[RTSX_SD_CARD].p_dev =
 				rtsx_pci_create_subdev(pcr,
-					DRV_NAME_RTSX_PCI_SDMMC, RTSX_SD_SLOT);
+					DRV_NAME_RTSX_PCI_SDMMC, RTSX_SD_CARD);
+
+			spin_lock_irqsave(&pcr->lock, flags);
+		}
+
+		if (pcr->need_reset & MS_EXIST) {
+			pcr->need_reset &= ~MS_EXIST;
+			spin_unlock_irqrestore(&pcr->lock, flags);
+
+			pcr->slots[RTSX_MS_CARD].p_dev =
+				rtsx_pci_create_subdev(pcr,
+					DRV_NAME_RTSX_PCI_MS, RTSX_MS_CARD);
 
 			spin_lock_irqsave(&pcr->lock, flags);
 		}
@@ -800,6 +916,15 @@ static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
 		} else {
 			pcr->need_release |= SD_EXIST;
 			pcr->need_reset &= ~SD_EXIST;
+		}
+	}
+
+	if (int_reg & MS_INT) {
+		if (int_reg & MS_EXIST) {
+			pcr->need_reset |= MS_EXIST;
+		} else {
+			pcr->need_release |= MS_EXIST;
+			pcr->need_reset &= ~MS_EXIST;
 		}
 	}
 
@@ -928,60 +1053,6 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 	return 0;
 }
 
-/* SD Pull Control Enable:
- *     SD_DAT[3:0] ==> pull up
- *     SD_CD       ==> pull up
- *     SD_WP       ==> pull up
- *     SD_CMD      ==> pull up
- *     SD_CLK      ==> pull down
- */
-static const u32 rts5209_sd_pull_ctl_enable_tbl[] = {
-	RTSX_REG_PAIR(CARD_PULL_CTL1, 0xAA),
-	RTSX_REG_PAIR(CARD_PULL_CTL2, 0xAA),
-	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xE9),
-	0,
-};
-
-static const u32 rts5229_sd_pull_ctl_enable_tbl1[] = {
-	RTSX_REG_PAIR(CARD_PULL_CTL2, 0xAA),
-	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xE9),
-	0,
-};
-
-/* For RTS5229 version C */
-static const u32 rts5229_sd_pull_ctl_enable_tbl2[] = {
-	RTSX_REG_PAIR(CARD_PULL_CTL2, 0xAA),
-	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xD9),
-	0,
-};
-
-/* SD Pull Control Disable:
- *     SD_DAT[3:0] ==> pull down
- *     SD_CD       ==> pull up
- *     SD_WP       ==> pull down
- *     SD_CMD      ==> pull down
- *     SD_CLK      ==> pull down
- */
-static const u32 rts5209_sd_pull_ctl_disable_tbl[] = {
-	RTSX_REG_PAIR(CARD_PULL_CTL1, 0x55),
-	RTSX_REG_PAIR(CARD_PULL_CTL2, 0x55),
-	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xD5),
-	0,
-};
-
-static const u32 rts5229_sd_pull_ctl_disable_tbl1[] = {
-	RTSX_REG_PAIR(CARD_PULL_CTL2, 0x55),
-	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xD5),
-	0,
-};
-
-/* For RTS5229 version C */
-static const u32 rts5229_sd_pull_ctl_disable_tbl2[] = {
-	RTSX_REG_PAIR(CARD_PULL_CTL2, 0x55),
-	RTSX_REG_PAIR(CARD_PULL_CTL3, 0xE5),
-	0,
-};
-
 static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 {
 	int err;
@@ -993,46 +1064,11 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 	switch (PCI_PID(pcr)) {
 	default:
 	case 0x5209:
-		pcr->extra_caps = EXTRA_CAPS_SD_SDR50 |
-			EXTRA_CAPS_SD_SDR104 | EXTRA_CAPS_MMC_8BIT;
-
-		pcr->rval.ldo_pwr_on = 0x00;
-		pcr->rval.ldo_pwr_off = 0x06;
-		pcr->rval.ldo_pwr_suspend = 0x04;
-
-		pcr->num_slots = 1;
-		pcr->ops = &rts5209_pcr_ops;
-
-		pcr->ic_version = pcr->ops->get_ic_version(pcr);
-		pcr->sd_pull_ctl_enable_tbl = rts5209_sd_pull_ctl_enable_tbl;
-		pcr->sd_pull_ctl_disable_tbl =	rts5209_sd_pull_ctl_disable_tbl;
-
+		rts5209_init_params(pcr);
 		break;
 
 	case 0x5229:
-		pcr->extra_caps = EXTRA_CAPS_SD_SDR50 |
-			EXTRA_CAPS_SD_SDR104;
-
-		pcr->rval.ldo_pwr_on = 0x06;
-		pcr->rval.ldo_pwr_off = 0x00;
-		pcr->rval.ldo_pwr_suspend = 0x02;
-
-		pcr->num_slots = 1;
-		pcr->ops = &rts5229_pcr_ops;
-
-		pcr->ic_version = pcr->ops->get_ic_version(pcr);
-		if (pcr->ic_version == IC_VER_C) {
-			pcr->sd_pull_ctl_enable_tbl =
-				rts5229_sd_pull_ctl_enable_tbl2;
-			pcr->sd_pull_ctl_disable_tbl =
-				rts5229_sd_pull_ctl_disable_tbl2;
-		} else {
-			pcr->sd_pull_ctl_enable_tbl =
-				rts5229_sd_pull_ctl_enable_tbl1;
-			pcr->sd_pull_ctl_disable_tbl =
-				rts5229_sd_pull_ctl_disable_tbl1;
-		}
-
+		rts5229_init_params(pcr);
 		break;
 	}
 
@@ -1056,6 +1092,8 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 	rtsx_pci_writel(pcr, RTSX_BIPR, irq_status);
 	if (irq_status & SD_EXIST)
 		pcr->need_reset |= SD_EXIST;
+	if (irq_status & MS_EXIST)
+		pcr->need_reset |= MS_EXIST;
 
 	if (pcr->need_reset)
 		queue_delayed_work(workqueue, &pcr->carddet_work, 0);

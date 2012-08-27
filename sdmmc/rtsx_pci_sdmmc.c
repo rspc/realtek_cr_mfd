@@ -49,6 +49,10 @@ struct realtek_pci_sdmmc {
 
 	struct mutex		host_mutex;
 
+	u8			ssc_depth;
+	unsigned int		clock;
+	bool			vpclk;
+	bool			double_clk;
 	bool			eject;
 	bool			initial_mode;
 	bool			ddr_mode;
@@ -699,6 +703,12 @@ static void sdmmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 
 	rtsx_pci_start_run(pcr);
 
+	rtsx_pci_switch_clock(pcr, host->clock, host->ssc_depth,
+			host->initial_mode, host->double_clk, host->vpclk);
+	rtsx_pci_write_register(pcr, CARD_SELECT, 0x07, SD_MOD_SEL);
+	rtsx_pci_write_register(pcr, CARD_SHARE_MODE,
+			CARD_SHARE_MASK, CARD_SHARE_48_SD);
+
 	mutex_lock(&host->host_mutex);
 	host->mrq = mrq;
 	mutex_unlock(&host->host_mutex);
@@ -773,28 +783,11 @@ static int sd_power_on(struct realtek_pci_sdmmc *host)
 	if (err < 0)
 		return err;
 
-	err = rtsx_pci_sd_pull_ctl_enable(pcr);
+	err = rtsx_pci_card_pull_ctl_enable(pcr, RTSX_SD_CARD);
 	if (err < 0)
 		return err;
 
-	rtsx_pci_init_cmd(pcr);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
-			SD_POWER_MASK, SD_PARTIAL_POWER_ON);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
-			LDO3318_PWR_MASK, pcr->rval.ldo_pwr_suspend);
-	err = rtsx_pci_send_cmd(pcr, 100);
-	if (err < 0)
-		return err;
-
-	/* To avoid too large in-rush current */
-	udelay(150);
-
-	rtsx_pci_init_cmd(pcr);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
-			SD_POWER_MASK, SD_POWER_ON);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
-			LDO3318_PWR_MASK, pcr->rval.ldo_pwr_on);
-	err = rtsx_pci_send_cmd(pcr, 100);
+	err = rtsx_pci_card_power_on(pcr, RTSX_SD_CARD);
 	if (err < 0)
 		return err;
 
@@ -815,17 +808,16 @@ static int sd_power_off(struct realtek_pci_sdmmc *host)
 
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_CLK_EN, SD_CLK_EN, 0);
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_OE, SD_OUTPUT_EN, 0);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
-			SD_POWER_MASK | PMOS_STRG_MASK,
-			SD_POWER_OFF | PMOS_STRG_400mA);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
-			LDO3318_PWR_MASK, pcr->rval.ldo_pwr_off);
 
 	err = rtsx_pci_send_cmd(pcr, 100);
 	if (err < 0)
 		return err;
 
-	return rtsx_pci_sd_pull_ctl_disable(pcr);
+	err = rtsx_pci_card_power_off(pcr, RTSX_SD_CARD);
+	if (err < 0)
+		return err;
+
+	return rtsx_pci_card_pull_ctl_disable(pcr, RTSX_SD_CARD);
 }
 
 static int sd_set_power_mode(struct realtek_pci_sdmmc *host,
@@ -921,8 +913,6 @@ static void sdmmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 {
 	struct realtek_pci_sdmmc *host = mmc_priv(mmc);
 	struct rtsx_pcr *pcr = host->pcr;
-	bool vpclk = false, double_clk = true;
-	u8 ssc_depth;
 
 	if (host->eject)
 		return;
@@ -935,21 +925,24 @@ static void sdmmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	sd_set_power_mode(host, ios->power_mode);
 	sd_set_timing(host, ios->timing, &host->ddr_mode);
 
+	host->vpclk = false;
+	host->double_clk = true;
+
 	switch (ios->timing) {
 	case MMC_TIMING_UHS_SDR104:
 	case MMC_TIMING_UHS_SDR50:
-		ssc_depth = RTSX_SSC_DEPTH_2M;
-		vpclk = true;
-		double_clk = false;
+		host->ssc_depth = RTSX_SSC_DEPTH_2M;
+		host->vpclk = true;
+		host->double_clk = false;
 		break;
 
 	case MMC_TIMING_UHS_DDR50:
 	case MMC_TIMING_UHS_SDR25:
-		ssc_depth = RTSX_SSC_DEPTH_1M;
+		host->ssc_depth = RTSX_SSC_DEPTH_1M;
 		break;
 
 	default:
-		ssc_depth = RTSX_SSC_DEPTH_500K;
+		host->ssc_depth = RTSX_SSC_DEPTH_500K;
 		break;
 	}
 
@@ -958,8 +951,9 @@ static void sdmmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	else
 		host->initial_mode = false;
 
-	rtsx_pci_switch_clock(pcr, ios->clock, ssc_depth,
-			host->initial_mode, double_clk, vpclk);
+	host->clock = ios->clock;
+	rtsx_pci_switch_clock(pcr, ios->clock, host->ssc_depth,
+			host->initial_mode, host->double_clk, host->vpclk);
 
 	mutex_unlock(&pcr->pcr_mutex);
 }
@@ -1275,11 +1269,11 @@ static int rtsx_pci_sdmmc_drv_probe(struct platform_device *pdev)
 	struct realtek_pci_sdmmc *host;
 	struct rtsx_pcr *pcr = platform_get_drvdata(pdev);
 
-	dev_dbg(&(pdev->dev),
-			": Realtek PCI-E SDMMC controller found\n");
-
 	if (!pcr)
 		return -ENXIO;
+
+	dev_dbg(&(pdev->dev),
+			": Realtek PCI-E SDMMC controller found\n");
 
 	mmc = mmc_alloc_host(sizeof(*host), &pcr->pci->dev);
 	if (!mmc)

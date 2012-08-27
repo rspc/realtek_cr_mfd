@@ -157,20 +157,25 @@
 
 /* Card Clock Enable Register */
 #define SD_CLK_EN			0x04
+#define MS_CLK_EN			0x08
 
 /* Card Select Register */
 #define SD_MOD_SEL			2
+#define MS_MOD_SEL			3
 
 /* Card Output Enable Register */
 #define SD_OUTPUT_EN			0x04
+#define MS_OUTPUT_EN			0x08
 
 /* CARD_SHARE_MODE */
 #define CARD_SHARE_MASK			0x0F
 #define CARD_SHARE_MULTI_LUN		0x00
 #define	CARD_SHARE_NORMAL		0x00
 #define	CARD_SHARE_48_SD		0x04
+#define	CARD_SHARE_48_MS		0x08
 /* CARD_SHARE_MODE for barossa */
 #define CARD_SHARE_BAROSSA_SD		0x01
+#define CARD_SHARE_BAROSSA_MS		0x02	
 
 /* SD30_DRIVE_SEL */
 #define DRIVER_TYPE_A			0x05
@@ -353,6 +358,46 @@
 #define CLK_DIV_4			0x03
 #define CLK_DIV_8			0x04
 
+/* MS_CFG */
+#define	SAMPLE_TIME_RISING		0x00
+#define	SAMPLE_TIME_FALLING		0x80
+#define	PUSH_TIME_DEFAULT		0x00
+#define	PUSH_TIME_ODD			0x40
+#define	NO_EXTEND_TOGGLE		0x00
+#define	EXTEND_TOGGLE_CHK		0x20
+#define	MS_BUS_WIDTH_1			0x00
+#define	MS_BUS_WIDTH_4			0x10
+#define	MS_BUS_WIDTH_8			0x18
+#define	MS_2K_SECTOR_MODE		0x04
+#define	MS_512_SECTOR_MODE		0x00
+#define	MS_TOGGLE_TIMEOUT_EN		0x00
+#define	MS_TOGGLE_TIMEOUT_DISEN		0x01
+#define MS_NO_CHECK_INT			0x02
+
+/* MS_TRANS_CFG */
+#define	WAIT_INT			0x80
+#define	NO_WAIT_INT			0x00
+#define	NO_AUTO_READ_INT_REG		0x00
+#define	AUTO_READ_INT_REG		0x40	
+#define	MS_CRC16_ERR			0x20
+#define	MS_RDY_TIMEOUT			0x10
+#define	MS_INT_CMDNK			0x08
+#define	MS_INT_BREQ			0x04
+#define	MS_INT_ERR			0x02 
+#define	MS_INT_CED			0x01
+
+/* MS_TRANSFER */
+#define	MS_TRANSFER_START		0x80
+#define	MS_TRANSFER_END			0x40
+#define	MS_TRANSFER_ERR			0x20
+#define	MS_BS_STATE			0x10
+#define	MS_TM_READ_BYTES		0x00
+#define	MS_TM_NORMAL_READ		0x01
+#define	MS_TM_WRITE_BYTES		0x04
+#define	MS_TM_NORMAL_WRITE		0x05
+#define	MS_TM_AUTO_READ			0x08
+#define	MS_TM_AUTO_WRITE		0x0C
+
 /* SD Configure 2 Register */
 #define	SD_CALCULATE_CRC7		0x00
 #define	SD_NO_CALCULATE_CRC7		0x80
@@ -402,6 +447,10 @@
 #define SD_PARTIAL_POWER_ON		0x01
 #define SD_POWER_ON			0x00
 #define SD_POWER_MASK			0x03
+#define MS_POWER_OFF			0x0C
+#define MS_PARTIAL_POWER_ON		0x04
+#define MS_POWER_ON			0x00
+#define MS_POWER_MASK			0x0C
 
 /* PWR_GATE_CTRL */
 #define PWR_GATE_EN			0x01
@@ -420,6 +469,16 @@
 #define SAMPLE_FIX_CLK			(0x00 << 4)
 #define SAMPLE_VAR_CLK0			(0x01 << 4)
 #define SAMPLE_VAR_CLK1			(0x02 << 4)
+
+#define MS_CFG				0xFD40
+#define MS_TPC				0xFD41
+#define MS_TRANS_CFG			0xFD42
+#define MS_TRANSFER			0xFD43
+#define MS_INT_REG			0xFD44
+#define MS_BYTE_CNT			0xFD45
+#define MS_SECTOR_CNT_L			0xFD46
+#define MS_SECTOR_CNT_H			0xFD47
+#define MS_DBUS_H			0xFD48
 
 #define SD_CFG1				0xFDA0
 #define SD_CFG2				0xFDA1
@@ -573,17 +632,27 @@
 
 #define rtsx_pci_init_cmd(pcr)		((pcr)->ci = 0)
 
-struct reg_val {
+struct pcr_reg_val {
 	/* Enable signal for regulator3318 */
+	u8 ldo_pwr_mask;
 	u8 ldo_pwr_on;
 	u8 ldo_pwr_off;
 	u8 ldo_pwr_suspend;
+
+	/* Power control */
+	u8 sd_pwr_mask;
+	u8 sd_partial_pwr_on;
+	u8 sd_pwr_on;
+	u8 sd_pwr_off;
+	u8 ms_pwr_mask;
+	u8 ms_partial_pwr_on;
+	u8 ms_pwr_on;
+	u8 ms_pwr_off;
 };
 
 struct rtsx_pcr;
 
 struct pcr_ops {
-	u8		(*get_ic_version)(struct rtsx_pcr *pcr);
 	int		(*extra_init_hw)(struct rtsx_pcr *pcr);
 	int		(*optimize_phy)(struct rtsx_pcr *pcr);
 	int		(*turn_on_led)(struct rtsx_pcr *pcr);
@@ -630,6 +699,8 @@ struct rtsx_pcr {
 	struct completion		*done;
 	struct completion		*finish_me;
 
+	unsigned int			cur_clock;
+	bool				ms_pmos;
 	bool				remove_pci;
 	bool				msi_en;
 
@@ -647,9 +718,11 @@ struct rtsx_pcr {
 #define IC_VER_D			3
 	u8				ic_version;
 
-	struct reg_val			rval;
+	const struct pcr_reg_val	*rval;
 	const u32			*sd_pull_ctl_enable_tbl;
 	const u32			*sd_pull_ctl_disable_tbl;
+	const u32			*ms_pull_ctl_enable_tbl;
+	const u32			*ms_pull_ctl_disable_tbl;
 
 	const struct pcr_ops		*ops;
 	enum PDEV_STAT			state;
@@ -676,10 +749,12 @@ int rtsx_pci_transfer_data(struct rtsx_pcr *pcr, struct scatterlist *sglist,
 		int num_sg, bool read, int timeout);
 int rtsx_pci_read_ppbuf(struct rtsx_pcr *pcr, u8 *buf, int buf_len);
 int rtsx_pci_write_ppbuf(struct rtsx_pcr *pcr, u8 *buf, int buf_len);
-int rtsx_pci_sd_pull_ctl_enable(struct rtsx_pcr *pcr);
-int rtsx_pci_sd_pull_ctl_disable(struct rtsx_pcr *pcr);
+int rtsx_pci_card_pull_ctl_enable(struct rtsx_pcr *pcr, int card);
+int rtsx_pci_card_pull_ctl_disable(struct rtsx_pcr *pcr, int card);
 int rtsx_pci_switch_clock(struct rtsx_pcr *pcr, unsigned int card_clock,
 		u8 ssc_depth, bool initial_mode, bool double_clk, bool vpclk);
+int rtsx_pci_card_power_on(struct rtsx_pcr *pcr, int card);
+int rtsx_pci_card_power_off(struct rtsx_pcr *pcr, int card);
 void rtsx_pci_complete_unfinished_transfer(struct rtsx_pcr *pcr);
 
 static inline u8 *rtsx_pci_get_cmd_data(struct rtsx_pcr *pcr)
