@@ -175,7 +175,7 @@
 #define	CARD_SHARE_48_MS		0x08
 /* CARD_SHARE_MODE for barossa */
 #define CARD_SHARE_BAROSSA_SD		0x01
-#define CARD_SHARE_BAROSSA_MS		0x02	
+#define CARD_SHARE_BAROSSA_MS		0x02
 
 /* SD30_DRIVE_SEL */
 #define DRIVER_TYPE_A			0x05
@@ -378,12 +378,12 @@
 #define	WAIT_INT			0x80
 #define	NO_WAIT_INT			0x00
 #define	NO_AUTO_READ_INT_REG		0x00
-#define	AUTO_READ_INT_REG		0x40	
+#define	AUTO_READ_INT_REG		0x40
 #define	MS_CRC16_ERR			0x20
 #define	MS_RDY_TIMEOUT			0x10
 #define	MS_INT_CMDNK			0x08
 #define	MS_INT_BREQ			0x04
-#define	MS_INT_ERR			0x02 
+#define	MS_INT_ERR			0x02
 #define	MS_INT_CED			0x01
 
 /* MS_TRANSFER */

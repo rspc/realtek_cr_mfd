@@ -1,10 +1,8 @@
 BUILD_DIR := /lib/modules/$(shell uname -r)/build/
 
-#subdir-ccflags-y := -DDEBUG
+#export CONFIG_CR_DEBUG = y
 
-obj-m += pci/
-obj-m += sdmmc/
-obj-m += memstick/
+obj-m += src/
 
 default:
 	make -C $(BUILD_DIR) SUBDIRS=$(PWD) modules

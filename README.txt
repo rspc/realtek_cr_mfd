@@ -50,5 +50,5 @@ About Debug
 The default Makefile disables debug message. If you need it, please
 modify the top-level Makefile and uncomment the below line:
 
-#subdir-ccflags-y := -DDEBUG
+#export CONFIG_CR_DEBUG = y
 
