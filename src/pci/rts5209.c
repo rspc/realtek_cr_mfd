@@ -48,68 +48,33 @@ static void rts5209_init_vendor_cfg(struct rtsx_pcr *pcr)
 	}
 }
 
-static int rts5209_extra_init_hw(struct rtsx_pcr *pcr)
-{
-	return 0;
-}
-
 static int rts5209_optimize_phy(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_phy_register(pcr, 0x00, 0xB966);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_phy_register(pcr, 0x00, 0xB966);
 }
 
 static int rts5209_turn_on_led(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_register(pcr, 0xFD58, 0x01, 0x00);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_register(pcr, 0xFD58, 0x01, 0x00);
 }
 
 static int rts5209_turn_off_led(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_register(pcr, 0xFD58, 0x01, 0x01);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_register(pcr, 0xFD58, 0x01, 0x01);
 }
 
 static int rts5209_enable_auto_blink(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_register(pcr, CARD_AUTO_BLINK, 0xFF, 0x0D);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_register(pcr, CARD_AUTO_BLINK, 0xFF, 0x0D);
 }
 
 static int rts5209_disable_auto_blink(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_register(pcr, CARD_AUTO_BLINK, 0x08, 0x00);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_register(pcr, CARD_AUTO_BLINK, 0x08, 0x00);
 }
 
 static const struct pcr_ops rts5209_pcr_ops = {
-	.extra_init_hw = rts5209_extra_init_hw,
+	.extra_init_hw = NULL,
 	.optimize_phy = rts5209_optimize_phy,
 	.turn_on_led = rts5209_turn_on_led,
 	.turn_off_led = rts5209_turn_off_led,

@@ -35,8 +35,6 @@ static u8 rts5229_get_ic_version(struct rtsx_pcr *pcr)
 
 static int rts5229_extra_init_hw(struct rtsx_pcr *pcr)
 {
-	int err;
-
 	rtsx_pci_init_cmd(pcr);
 
 	/* Switch LDO3318 source from DV33 to card_3v3 */
@@ -45,67 +43,33 @@ static int rts5229_extra_init_hw(struct rtsx_pcr *pcr)
 	/* LED shine disabled, set initial shine cycle period */
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, 0xFC1E, 0x0F, 0x02);
 
-	err = rtsx_pci_send_cmd(pcr, 100);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_send_cmd(pcr, 100);
 }
 
 static int rts5229_optimize_phy(struct rtsx_pcr *pcr)
 {
-	int err;
-
 	/* Optimize RX sensitivity */
-	err = rtsx_pci_write_phy_register(pcr, 0x00, 0xBA42);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_phy_register(pcr, 0x00, 0xBA42);
 }
 
 static int rts5229_turn_on_led(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_register(pcr, 0xFC1F, 0x02, 0x02);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_register(pcr, 0xFC1F, 0x02, 0x02);
 }
 
 static int rts5229_turn_off_led(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_register(pcr, 0xFC1F, 0x02, 0x00);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_register(pcr, 0xFC1F, 0x02, 0x00);
 }
 
 static int rts5229_enable_auto_blink(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_register(pcr, 0xFC1E, 0x08, 0x08);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_register(pcr, 0xFC1E, 0x08, 0x08);
 }
 
 static int rts5229_disable_auto_blink(struct rtsx_pcr *pcr)
 {
-	int err;
-
-	err = rtsx_pci_write_register(pcr, 0xFC1E, 0x08, 0x00);
-	if (err < 0)
-		return err;
-
-	return 0;
+	return rtsx_pci_write_register(pcr, 0xFC1E, 0x08, 0x00);
 }
 
 static const struct pcr_ops rts5229_pcr_ops = {

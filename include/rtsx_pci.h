@@ -48,6 +48,14 @@
 #define STOP_DMA			(0x01 << 28)
 #define TRIG_DMA			(0x01 << 31)
 
+/* Host access internal memory register */
+#define HAIMR_TRANS_START		(0x01 << 31)
+#define HAIMR_READ			0x00
+#define HAIMR_WRITE			(0x01 << 30)
+#define HAIMR_READ_START		(HAIMR_TRANS_START | HAIMR_READ)
+#define HAIMR_WRITE_START		(HAIMR_TRANS_START | HAIMR_WRITE)
+#define HAIMR_TRANS_END			(HAIMR_TRANS_START)
+
 /* Bus interrupt pending register */
 #define CMD_DONE_INT			(1 << 31)
 #define DATA_DONE_INT			(1 << 30)
