@@ -55,12 +55,12 @@ static int rts5209_optimize_phy(struct rtsx_pcr *pcr)
 
 static int rts5209_turn_on_led(struct rtsx_pcr *pcr)
 {
-	return rtsx_pci_write_register(pcr, 0xFD58, 0x01, 0x00);
+	return rtsx_pci_write_register(pcr, CARD_GPIO, 0x01, 0x00);
 }
 
 static int rts5209_turn_off_led(struct rtsx_pcr *pcr)
 {
-	return rtsx_pci_write_register(pcr, 0xFD58, 0x01, 0x01);
+	return rtsx_pci_write_register(pcr, CARD_GPIO, 0x01, 0x01);
 }
 
 static int rts5209_enable_auto_blink(struct rtsx_pcr *pcr)

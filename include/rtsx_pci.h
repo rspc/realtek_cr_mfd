@@ -563,6 +563,8 @@
 #define RCCTL				0xFC14
 
 #define FPGA_PULL_CTL			0xFC1D
+#define OLT_LED_CTL			0xFC1E
+#define GPIO_CTL			0xFC1F
 
 #define CARD_PULL_CTL1			0xFD60
 #define CARD_PULL_CTL2			0xFD61
@@ -622,13 +624,15 @@
 #define RESET_LOAD_REG			0xFE5E
 #define EFUSE_CONTENT			0xFE5F
 #define HOST_SLEEP_STATE		0xFE60
-#define MAIN_PWR_OFF_CTL		0xFE70 /* RTS5208 */
-#define SDIO_CFG			0xFE70 /* RTS5209 */
+#define SDIO_CFG			0xFE70
 
 #define NFTS_TX_CTRL			0xFE72
 
 #define PWR_GATE_CTRL			0xFE75
 #define PWD_SUSPEND_EN			0xFE76
+#define LDO_PWR_SEL			0xFE78
+
+#define DUMMY_REG_RESET_0		0xFE90
 
 /* Memory mapping */
 #define SRAM_BASE			0xE600
