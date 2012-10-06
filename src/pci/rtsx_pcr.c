@@ -37,7 +37,6 @@ static bool msi_en = true;
 module_param(msi_en, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(msi_en, "Enable MSI");
 
-static struct workqueue_struct *workqueue;
 static DEFINE_IDR(rtsx_pci_idr);
 static DEFINE_SPINLOCK(rtsx_pci_lock);
 
@@ -908,7 +907,7 @@ static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
 	}
 
 	if (pcr->need_reset || pcr->need_release)
-		queue_delayed_work(workqueue, &pcr->carddet_work,
+		schedule_delayed_work(&pcr->carddet_work,
 				msecs_to_jiffies(200));
 
 	if (int_reg & (NEED_COMPLETE_INT | DELINK_INT)) {
@@ -951,7 +950,7 @@ static void rtsx_pci_enter_idle(unsigned long __data)
 {
 	struct rtsx_pcr *pcr = (struct rtsx_pcr *)__data;
 
-	queue_work(workqueue, &pcr->idle_work);
+	schedule_work(&pcr->idle_work);
 }
 
 static void rtsx_pci_idle_work(struct work_struct *work)
@@ -1081,7 +1080,7 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 		pcr->need_reset |= MS_EXIST;
 
 	if (pcr->need_reset)
-		queue_delayed_work(workqueue, &pcr->carddet_work, 0);
+		schedule_delayed_work(&pcr->carddet_work, 0);
 
 	return 0;
 }
@@ -1203,7 +1202,6 @@ static void __devexit rtsx_pci_remove(struct pci_dev *pcidev)
 
 	pcr->remove_pci = true;
 
-	flush_workqueue(workqueue);
 	cancel_delayed_work(&pcr->carddet_work);
 	del_timer_sync(&pcr->idle_timer);
 
@@ -1248,7 +1246,6 @@ static int rtsx_pci_suspend(struct pci_dev *pcidev, pm_message_t state)
 
 	pcr = pci_get_drvdata(pcidev);
 
-	flush_workqueue(workqueue);
 	cancel_delayed_work(&pcr->carddet_work);
 	del_timer_sync(&pcr->idle_timer);
 
