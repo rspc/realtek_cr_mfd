@@ -70,7 +70,6 @@ static inline void sd_clear_error(struct realtek_pci_sdmmc *host)
 }
 
 #ifdef DEBUG
-
 static void sd_print_debug_regs(struct realtek_pci_sdmmc *host)
 {
 	struct rtsx_pcr *pcr = host->pcr;
@@ -91,12 +90,9 @@ static void sd_print_debug_regs(struct realtek_pci_sdmmc *host)
 	for (i = 0xFD52; i <= 0xFD69; i++)
 		dev_dbg(sdmmc_dev(host), "0x%04X: 0x%02x\n", i, *(ptr++));
 }
-
 #else
-
 #define sd_print_debug_regs(host)
-
-#endif
+#endif /* DEBUG */
 
 static int sd_read_data(struct realtek_pci_sdmmc *host, u8 *cmd, u16 byte_cnt,
 		u8 *buf, int buf_len, int timeout)
@@ -105,8 +101,7 @@ static int sd_read_data(struct realtek_pci_sdmmc *host, u8 *cmd, u16 byte_cnt,
 	int err, i;
 	u8 trans_mode;
 
-	dev_dbg(sdmmc_dev(host), "%s: SD/MMC CMD %d\n",
-			__func__, cmd[0] - 0x40);
+	dev_dbg(sdmmc_dev(host), "%s: SD/MMC CMD%d\n", __func__, cmd[0] - 0x40);
 
 	if (!buf)
 		buf_len = 0;
@@ -119,11 +114,9 @@ static int sd_read_data(struct realtek_pci_sdmmc *host, u8 *cmd, u16 byte_cnt,
 	rtsx_pci_init_cmd(pcr);
 
 	for (i = 0; i < 5; i++)
-		rtsx_pci_add_cmd(pcr, WRITE_REG_CMD,
-				SD_CMD0 + i, 0xFF, cmd[i]);
+		rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_CMD0 + i, 0xFF, cmd[i]);
 
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_BYTE_CNT_L,
-			0xFF, (u8)byte_cnt);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_BYTE_CNT_L, 0xFF, (u8)byte_cnt);
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_BYTE_CNT_H,
 			0xFF, (u8)(byte_cnt >> 8));
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_BLOCK_CNT_L, 0xFF, 1);
@@ -153,7 +146,7 @@ static int sd_read_data(struct realtek_pci_sdmmc *host, u8 *cmd, u16 byte_cnt,
 		err = rtsx_pci_read_ppbuf(pcr, buf, buf_len);
 		if (err < 0) {
 			dev_dbg(sdmmc_dev(host),
-				"rtsx_read_ppbuf fail (err = %d)\n", err);
+				"rtsx_pci_read_ppbuf fail (err = %d)\n", err);
 			return err;
 		}
 	}
@@ -175,16 +168,12 @@ static int sd_write_data(struct realtek_pci_sdmmc *host, u8 *cmd, u16 byte_cnt,
 		err = rtsx_pci_write_ppbuf(pcr, buf, buf_len);
 		if (err < 0) {
 			dev_dbg(sdmmc_dev(host),
-				"rtsx_write_ppbuf fail (err = %d)\n", err);
+				"rtsx_pci_write_ppbuf fail (err = %d)\n", err);
 			return err;
 		}
 	}
 
-	if (cmd)
-		trans_mode = SD_TM_AUTO_WRITE_2;
-	else
-		trans_mode = SD_TM_AUTO_WRITE_3;
-
+	trans_mode = cmd ? SD_TM_AUTO_WRITE_2 : SD_TM_AUTO_WRITE_3;
 	rtsx_pci_init_cmd(pcr);
 
 	if (cmd) {
@@ -196,8 +185,7 @@ static int sd_write_data(struct realtek_pci_sdmmc *host, u8 *cmd, u16 byte_cnt,
 					SD_CMD0 + i, 0xFF, cmd[i]);
 	}
 
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_BYTE_CNT_L,
-			0xFF, (u8)byte_cnt);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_BYTE_CNT_L, 0xFF, (u8)byte_cnt);
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_BYTE_CNT_H,
 			0xFF, (u8)(byte_cnt >> 8));
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_BLOCK_CNT_L, 0xFF, 1);
@@ -240,8 +228,8 @@ static void sd_send_cmd_get_rsp(struct realtek_pci_sdmmc *host,
 	dev_dbg(sdmmc_dev(host), "%s: SD/MMC CMD %d, arg = 0x%08x\n",
 			__func__, cmd_idx, arg);
 
-	/* Response type */
-	/* R0
+	/* Response type:
+	 * R0
 	 * R1, R5, R6, R7
 	 * R1b
 	 * R2
@@ -496,13 +484,11 @@ static int sd_change_phase(struct realtek_pci_sdmmc *host, u8 sample_point)
 
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CLK_CTL, CHANGE_CLK, CHANGE_CLK);
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_VPRX_CTL, 0x1F, sample_point);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_VPCLK0_CTL,
-			PHASE_NOT_RESET, 0);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_VPCLK0_CTL, PHASE_NOT_RESET, 0);
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_VPCLK0_CTL,
 			PHASE_NOT_RESET, PHASE_NOT_RESET);
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CLK_CTL, CHANGE_CLK, 0);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_CFG1,
-			SD_ASYNC_FIFO_NOT_RST, 0);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD_CFG1, SD_ASYNC_FIFO_NOT_RST, 0);
 
 	err = rtsx_pci_send_cmd(pcr, 100);
 	if (err < 0)
@@ -555,8 +541,7 @@ static u8 sd_search_final_phase(struct realtek_pci_sdmmc *host, u32 phase_map)
 		path[idx].mid = path[idx].start + path[idx].len / 2;
 	}
 
-	/* Connect the first continuous path
-	 * and the last one if they are adjacent */
+	/* Connect the first and last continuous paths if they are adjacent */
 	if (!path[0].start && (path[cont_path_cnt - 1].end == MAX_PHASE)) {
 		/* Using negative index */
 		path[0].start = path[cont_path_cnt - 1].start - MAX_PHASE - 1;
@@ -590,7 +575,7 @@ static u8 sd_search_final_phase(struct realtek_pci_sdmmc *host, u32 phase_map)
 	}
 
 finish:
-	dev_dbg(sdmmc_dev(host), "Final choosen phase: %d\n", final_phase);
+	dev_dbg(sdmmc_dev(host), "Final chosen phase: %d\n", final_phase);
 	return final_phase;
 }
 
@@ -791,8 +776,7 @@ static int sd_power_on(struct realtek_pci_sdmmc *host)
 	if (err < 0)
 		return err;
 
-	err = rtsx_pci_write_register(pcr, CARD_OE,
-			SD_OUTPUT_EN, SD_OUTPUT_EN);
+	err = rtsx_pci_write_register(pcr, CARD_OE, SD_OUTPUT_EN, SD_OUTPUT_EN);
 	if (err < 0)
 		return err;
 
@@ -935,21 +919,16 @@ static void sdmmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		host->vpclk = true;
 		host->double_clk = false;
 		break;
-
 	case MMC_TIMING_UHS_DDR50:
 	case MMC_TIMING_UHS_SDR25:
 		host->ssc_depth = RTSX_SSC_DEPTH_1M;
 		break;
-
 	default:
 		host->ssc_depth = RTSX_SSC_DEPTH_500K;
 		break;
 	}
 
-	if (ios->clock <= 1000000)
-		host->initial_mode = true;
-	else
-		host->initial_mode = false;
+	host->initial_mode = (ios->clock <= 1000000) ? true : false;
 
 	host->clock = ios->clock;
 	rtsx_pci_switch_clock(pcr, ios->clock, host->ssc_depth,
@@ -972,7 +951,7 @@ static int sdmmc_get_ro(struct mmc_host *mmc)
 
 	rtsx_pci_start_run(pcr);
 
-	/* Check SD Machanical Write-Protect Switch */
+	/* Check SD mechanical write-protect switch */
 	val = rtsx_pci_readl(pcr, RTSX_BIPR);
 	dev_dbg(sdmmc_dev(host), "%s: RTSX_BIPR = 0x%08x\n", __func__, val);
 	if (val & SD_WRITE_PROTECT)
@@ -997,7 +976,7 @@ static int sdmmc_get_cd(struct mmc_host *mmc)
 
 	rtsx_pci_start_run(pcr);
 
-	/* Check SD Machanical Write-Protect Switch */
+	/* Check SD card detect */
 	val = rtsx_pci_readl(pcr, RTSX_BIPR);
 	dev_dbg(sdmmc_dev(host), "%s: RTSX_BIPR = 0x%08x\n", __func__, val);
 	if (val & SD_EXIST)
@@ -1051,8 +1030,7 @@ static int sd_wait_voltage_stable_2(struct realtek_pci_sdmmc *host)
 	msleep(50);
 
 	/* Toggle SD clock again */
-	err = rtsx_pci_write_register(pcr, SD_BUS_STAT,
-			0xFF, SD_CLK_TOGGLE_EN);
+	err = rtsx_pci_write_register(pcr, SD_BUS_STAT, 0xFF, SD_CLK_TOGGLE_EN);
 	if (err < 0)
 		return err;
 
@@ -1186,7 +1164,6 @@ static const struct mmc_host_ops realtek_pci_sdmmc_ops = {
 };
 
 #ifdef CONFIG_PM
-
 static int rtsx_pci_sdmmc_suspend(struct platform_device *pdev,
 		pm_message_t state)
 {
@@ -1212,12 +1189,9 @@ static int rtsx_pci_sdmmc_resume(struct platform_device *pdev)
 
 	return mmc_resume_host(mmc);
 }
-
 #else /* CONFIG_PM */
-
 #define rtsx_pci_sdmmc_suspend NULL
 #define rtsx_pci_sdmmc_resume NULL
-
 #endif /* CONFIG_PM */
 
 static void init_extra_caps(struct realtek_pci_sdmmc *host)
@@ -1225,8 +1199,7 @@ static void init_extra_caps(struct realtek_pci_sdmmc *host)
 	struct mmc_host *mmc = host->mmc;
 	struct rtsx_pcr *pcr = host->pcr;
 
-	dev_dbg(sdmmc_dev(host), "pcr->extra_caps = 0x%x\n",
-			pcr->extra_caps);
+	dev_dbg(sdmmc_dev(host), "pcr->extra_caps = 0x%x\n", pcr->extra_caps);
 
 	if (pcr->extra_caps & EXTRA_CAPS_SD_SDR50)
 		mmc->caps |= MMC_CAP_UHS_SDR50;
@@ -1272,8 +1245,7 @@ static int rtsx_pci_sdmmc_drv_probe(struct platform_device *pdev)
 	if (!pcr)
 		return -ENXIO;
 
-	dev_dbg(&(pdev->dev),
-			": Realtek PCI-E SDMMC controller found\n");
+	dev_dbg(&(pdev->dev), ": Realtek PCI-E SDMMC controller found\n");
 
 	mmc = mmc_alloc_host(sizeof(*host), &pcr->pci->dev);
 	if (!mmc)
@@ -1353,19 +1325,7 @@ static struct platform_driver rtsx_pci_sdmmc_driver = {
 		.name	= DRV_NAME_RTSX_PCI_SDMMC,
 	},
 };
-
-static int __init realtek_pci_sdmmc_drv_init(void)
-{
-	return platform_driver_register(&rtsx_pci_sdmmc_driver);
-}
-
-static void __exit realtek_pci_sdmmc_drv_exit(void)
-{
-	platform_driver_unregister(&rtsx_pci_sdmmc_driver);
-}
-
-module_init(realtek_pci_sdmmc_drv_init);
-module_exit(realtek_pci_sdmmc_drv_exit);
+module_platform_driver(rtsx_pci_sdmmc_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Wei WANG <wei_wang@realsil.com.cn>");
