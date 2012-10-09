@@ -60,7 +60,7 @@ void rtsx_pci_start_run(struct rtsx_pcr *pcr)
 			pcr->ops->enable_auto_blink(pcr);
 	}
 
-	mod_timer(&pcr->idle_timer, jiffies + msecs_to_jiffies(200));
+	mod_delayed_work(system_wq, &pcr->idle_work, msecs_to_jiffies(200));
 }
 EXPORT_SYMBOL_GPL(rtsx_pci_start_run);
 
@@ -946,16 +946,10 @@ static int rtsx_pci_acquire_irq(struct rtsx_pcr *pcr)
 	return 0;
 }
 
-static void rtsx_pci_enter_idle(unsigned long __data)
-{
-	struct rtsx_pcr *pcr = (struct rtsx_pcr *)__data;
-
-	schedule_work(&pcr->idle_work);
-}
-
 static void rtsx_pci_idle_work(struct work_struct *work)
 {
-	struct rtsx_pcr *pcr = container_of(work, struct rtsx_pcr, idle_work);
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct rtsx_pcr *pcr = container_of(dwork, struct rtsx_pcr, idle_work);
 
 	dev_dbg(&(pcr->pci->dev), "--> %s\n", __func__);
 
@@ -1148,8 +1142,7 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 	pcr->need_reset = 0;
 	pcr->need_release = 0;
 	INIT_DELAYED_WORK(&pcr->carddet_work, rtsx_pci_card_detect);
-	INIT_WORK(&pcr->idle_work, rtsx_pci_idle_work);
-	init_timer(&pcr->idle_timer);
+	INIT_DELAYED_WORK(&pcr->idle_work, rtsx_pci_idle_work);
 
 	pcr->msi_en = msi_en;
 	if (pcr->msi_en) {
@@ -1169,10 +1162,7 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 	if (ret < 0)
 		goto disable_irq;
 
-	pcr->idle_timer.expires = jiffies + msecs_to_jiffies(200);
-	pcr->idle_timer.data = (unsigned long)pcr;
-	pcr->idle_timer.function = rtsx_pci_enter_idle;
-	add_timer(&pcr->idle_timer);
+	schedule_delayed_work(&pcr->idle_work, msecs_to_jiffies(200));
 
 	return 0;
 
@@ -1203,7 +1193,7 @@ static void __devexit rtsx_pci_remove(struct pci_dev *pcidev)
 	pcr->remove_pci = true;
 
 	cancel_delayed_work(&pcr->carddet_work);
-	del_timer_sync(&pcr->idle_timer);
+	cancel_delayed_work(&pcr->idle_work);
 
 	for (i = 0; i < pcr->num_slots; i++) {
 		if (pcr->slots[i].p_dev) {
@@ -1247,7 +1237,7 @@ static int rtsx_pci_suspend(struct pci_dev *pcidev, pm_message_t state)
 	pcr = pci_get_drvdata(pcidev);
 
 	cancel_delayed_work(&pcr->carddet_work);
-	del_timer_sync(&pcr->idle_timer);
+	cancel_delayed_work(&pcr->idle_work);
 
 	mutex_lock(&pcr->pcr_mutex);
 
@@ -1295,8 +1285,7 @@ static int rtsx_pci_resume(struct pci_dev *pcidev)
 	if (ret)
 		goto out;
 
-	pcr->idle_timer.expires = jiffies + msecs_to_jiffies(200);
-	add_timer(&pcr->idle_timer);
+	schedule_delayed_work(&pcr->idle_work, msecs_to_jiffies(200));
 
 out:
 	mutex_unlock(&pcr->pcr_mutex);

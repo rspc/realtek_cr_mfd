@@ -703,8 +703,7 @@ struct rtsx_pcr {
 	int				need_release;
 
 	struct delayed_work		carddet_work;
-	struct timer_list		idle_timer;
-	struct work_struct		idle_work;
+	struct delayed_work		idle_work;
 
 	spinlock_t			lock;
 	struct mutex			pcr_mutex;
