@@ -618,19 +618,7 @@ static struct platform_driver rtsx_pci_ms_driver = {
 		.name	= DRV_NAME_RTSX_PCI_MS,
 	},
 };
-
-static int __init realtek_pci_ms_drv_init(void)
-{
-	return platform_driver_register(&rtsx_pci_ms_driver);
-}
-
-static void __exit realtek_pci_ms_drv_exit(void)
-{
-	platform_driver_unregister(&rtsx_pci_ms_driver);
-}
-
-module_init(realtek_pci_ms_drv_init);
-module_exit(realtek_pci_ms_drv_exit);
+module_platform_driver(rtsx_pci_ms_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Wei WANG <wei_wang@realsil.com.cn>");

@@ -1321,24 +1321,7 @@ static struct pci_driver rtsx_pci_driver = {
 	.suspend = rtsx_pci_suspend,
 	.resume = rtsx_pci_resume,
 };
-
-static int __init rtsx_pci_drv_init(void)
-{
-	workqueue = create_freezable_workqueue("rtsx_pci_wq");
-	if (!workqueue)
-		return -ENOMEM;
-
-	return pci_register_driver(&rtsx_pci_driver);
-}
-
-static void __exit rtsx_pci_drv_exit(void)
-{
-	pci_unregister_driver(&rtsx_pci_driver);
-	destroy_workqueue(workqueue);
-}
-
-module_init(rtsx_pci_drv_init);
-module_exit(rtsx_pci_drv_exit);
+module_pci_driver(rtsx_pci_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Wei WANG <wei_wang@realsil.com.cn>");
