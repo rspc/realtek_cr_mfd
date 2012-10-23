@@ -1236,18 +1236,30 @@ static void realtek_init_host(struct realtek_pci_sdmmc *host)
 	mmc->max_req_size = 524288;
 }
 
+static void rtsx_pci_sdmmc_card_event(struct platform_device *pdev)
+{
+	struct realtek_pci_sdmmc *host = platform_get_drvdata(pdev);
+
+	mmc_detect_change(host->mmc, 0);
+}
+
 static int rtsx_pci_sdmmc_drv_probe(struct platform_device *pdev)
 {
 	struct mmc_host *mmc;
 	struct realtek_pci_sdmmc *host;
-	struct rtsx_pcr *pcr = platform_get_drvdata(pdev);
+	struct rtsx_pcr *pcr;
+	struct pcr_handle *handle = pdev->dev.platform_data;
 
+	if (!handle)
+		return -ENXIO;
+
+	pcr = handle->pcr;
 	if (!pcr)
 		return -ENXIO;
 
 	dev_dbg(&(pdev->dev), ": Realtek PCI-E SDMMC controller found\n");
 
-	mmc = mmc_alloc_host(sizeof(*host), &pcr->pci->dev);
+	mmc = mmc_alloc_host(sizeof(*host), &pdev->dev);
 	if (!mmc)
 		return -ENOMEM;
 
@@ -1256,6 +1268,8 @@ static int rtsx_pci_sdmmc_drv_probe(struct platform_device *pdev)
 	host->mmc = mmc;
 	host->pdev = pdev;
 	platform_set_drvdata(pdev, host);
+	pcr->slots[RTSX_SD_CARD].p_dev = pdev;
+	pcr->slots[RTSX_SD_CARD].card_event = rtsx_pci_sdmmc_card_event;
 
 	mutex_init(&host->host_mutex);
 
@@ -1276,6 +1290,8 @@ static int rtsx_pci_sdmmc_drv_remove(struct platform_device *pdev)
 		return 0;
 
 	pcr = host->pcr;
+	pcr->slots[RTSX_SD_CARD].p_dev = NULL;
+	pcr->slots[RTSX_SD_CARD].card_event = NULL;
 	mmc = host->mmc;
 	host->eject = true;
 

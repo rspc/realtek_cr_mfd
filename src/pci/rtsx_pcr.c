@@ -28,6 +28,7 @@
 #include <linux/interrupt.h>
 #include <linux/idr.h>
 #include <linux/platform_device.h>
+#include <linux/mfd/core.h>
 #include <linux/mfd/rtsx_pci.h>
 #include <asm/unaligned.h>
 
@@ -39,6 +40,15 @@ MODULE_PARM_DESC(msi_en, "Enable MSI");
 
 static DEFINE_IDR(rtsx_pci_idr);
 static DEFINE_SPINLOCK(rtsx_pci_lock);
+
+static struct mfd_cell rtsx_pcr_cells[] = {
+	[RTSX_SD_CARD] = {
+		.name = DRV_NAME_RTSX_PCI_SDMMC,
+	},
+	[RTSX_MS_CARD] = {
+		.name = DRV_NAME_RTSX_PCI_MS,
+	},
+};
 
 static DEFINE_PCI_DEVICE_TABLE(rtsx_pci_ids) = {
 	{ PCI_DEVICE(0x10EC, 0x5209), PCI_CLASS_OTHERS << 16, 0xFF0000 },
@@ -756,39 +766,15 @@ void rtsx_pci_complete_unfinished_transfer(struct rtsx_pcr *pcr)
 }
 EXPORT_SYMBOL_GPL(rtsx_pci_complete_unfinished_transfer);
 
-static struct platform_device *rtsx_pci_create_subdev(struct rtsx_pcr *pcr,
-		const char *name, int slot_id)
-{
-	struct platform_device *p_dev;
-	int err;
-
-	p_dev = platform_device_alloc(name, pcr->id);
-	if (p_dev == NULL) {
-		dev_dbg(&(pcr->pci->dev), "alloc platform device fail!\n");
-		return NULL;
-	}
-
-	p_dev->dev.parent = &(pcr->pci->dev);
-	platform_set_drvdata(p_dev, pcr);
-	pcr->slots[slot_id].p_dev = p_dev;
-
-	err = platform_device_add(p_dev);
-	if (err) {
-		dev_dbg(&(pcr->pci->dev), "add platform device fail!\n");
-		pcr->slots[slot_id].p_dev = NULL;
-		platform_device_put(p_dev);
-		return NULL;
-	}
-
-	return p_dev;
-}
-
 static void rtsx_pci_card_detect(struct work_struct *work)
 {
 	struct delayed_work *dwork;
 	struct rtsx_pcr *pcr;
 	unsigned long flags;
 	u32 irq_status;
+	void (*sd_card_event)(struct platform_device *p_dev) = NULL;
+	void (*ms_card_event)(struct platform_device *p_dev) = NULL;
+	struct platform_device *sd_pdev = NULL, *ms_pdev = NULL;
 
 	dwork = to_delayed_work(work);
 	pcr = container_of(dwork, struct rtsx_pcr, carddet_work);
@@ -800,68 +786,28 @@ static void rtsx_pci_card_detect(struct work_struct *work)
 	irq_status = rtsx_pci_readl(pcr, RTSX_BIPR);
 	dev_dbg(&(pcr->pci->dev), "irq_status: 0x%08x\n", irq_status);
 
-	if (pcr->need_release) {
-		/* Card unplugged */
-		dev_dbg(&(pcr->pci->dev), "need_release: 0x%x\n",
-				pcr->need_release);
+	if (pcr->cd_detect) {
+		dev_dbg(&(pcr->pci->dev), "cd_detect: 0x%x\n",
+				pcr->cd_detect);
 
-		if (pcr->need_release & SD_EXIST) {
-			pcr->need_release &= ~SD_EXIST;
-			spin_unlock_irqrestore(&pcr->lock, flags);
-			if (pcr->slots[RTSX_SD_CARD].p_dev) {
-				platform_device_unregister(
-					pcr->slots[RTSX_SD_CARD].p_dev);
-				pcr->slots[RTSX_SD_CARD].p_dev = NULL;
-			}
-			spin_lock_irqsave(&pcr->lock, flags);
+		if (pcr->cd_detect & SD_EXIST) {
+			sd_pdev = pcr->slots[RTSX_SD_CARD].p_dev;
+			sd_card_event = pcr->slots[RTSX_SD_CARD].card_event;
+		}
+		if (pcr->cd_detect & MS_EXIST) {
+			ms_pdev = pcr->slots[RTSX_MS_CARD].p_dev;
+			ms_card_event = pcr->slots[RTSX_MS_CARD].card_event;
 		}
 
-		if (pcr->need_release & MS_EXIST) {
-			pcr->need_release &= ~MS_EXIST;
-			spin_unlock_irqrestore(&pcr->lock, flags);
-			if (pcr->slots[RTSX_MS_CARD].p_dev) {
-				platform_device_unregister(
-					pcr->slots[RTSX_MS_CARD].p_dev);
-				pcr->slots[RTSX_MS_CARD].p_dev = NULL;
-			}
-			spin_lock_irqsave(&pcr->lock, flags);
-		}
+		pcr->cd_detect = 0;
 	}
 
-	if (pcr->need_reset) {
-		/* Card plugged in */
-		pcr->need_reset &= irq_status;
-		if (!pcr->need_reset)
-			goto out;
-
-		dev_dbg(&(pcr->pci->dev), "need_reset: 0x%x\n",
-				pcr->need_reset);
-
-		if (pcr->need_reset & SD_EXIST) {
-			pcr->need_reset &= ~SD_EXIST;
-			spin_unlock_irqrestore(&pcr->lock, flags);
-
-			pcr->slots[RTSX_SD_CARD].p_dev =
-				rtsx_pci_create_subdev(pcr,
-					DRV_NAME_RTSX_PCI_SDMMC, RTSX_SD_CARD);
-
-			spin_lock_irqsave(&pcr->lock, flags);
-		}
-
-		if (pcr->need_reset & MS_EXIST) {
-			pcr->need_reset &= ~MS_EXIST;
-			spin_unlock_irqrestore(&pcr->lock, flags);
-
-			pcr->slots[RTSX_MS_CARD].p_dev =
-				rtsx_pci_create_subdev(pcr,
-					DRV_NAME_RTSX_PCI_MS, RTSX_MS_CARD);
-
-			spin_lock_irqsave(&pcr->lock, flags);
-		}
-	}
-
-out:
 	spin_unlock_irqrestore(&pcr->lock, flags);
+
+	if (sd_card_event)
+		sd_card_event(sd_pdev);
+	if (ms_card_event)
+		ms_card_event(ms_pdev);
 }
 
 static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
@@ -888,25 +834,12 @@ static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
 
 	int_reg &= (pcr->bier | 0x7FFFFF);
 
-	if (int_reg & SD_INT) {
-		if (int_reg & SD_EXIST) {
-			pcr->need_reset |= SD_EXIST;
-		} else {
-			pcr->need_release |= SD_EXIST;
-			pcr->need_reset &= ~SD_EXIST;
-		}
-	}
+	if (int_reg & SD_INT)
+		pcr->cd_detect |= SD_EXIST;
+	if (int_reg & MS_INT)
+		pcr->cd_detect |= MS_EXIST;
 
-	if (int_reg & MS_INT) {
-		if (int_reg & MS_EXIST) {
-			pcr->need_reset |= MS_EXIST;
-		} else {
-			pcr->need_release |= MS_EXIST;
-			pcr->need_reset &= ~MS_EXIST;
-		}
-	}
-
-	if (pcr->need_reset || pcr->need_release)
+	if (pcr->cd_detect)
 		schedule_delayed_work(&pcr->carddet_work,
 				msecs_to_jiffies(200));
 
@@ -1034,7 +967,6 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 {
 	int err;
-	u32 irq_status;
 
 	spin_lock_init(&pcr->lock);
 	mutex_init(&pcr->pcr_mutex);
@@ -1065,17 +997,6 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 		return err;
 	}
 
-	irq_status = rtsx_pci_readl(pcr, RTSX_BIPR);
-	/* Clear interrupt flag */
-	rtsx_pci_writel(pcr, RTSX_BIPR, irq_status);
-	if (irq_status & SD_EXIST)
-		pcr->need_reset |= SD_EXIST;
-	if (irq_status & MS_EXIST)
-		pcr->need_reset |= MS_EXIST;
-
-	if (pcr->need_reset)
-		schedule_delayed_work(&pcr->carddet_work, 0);
-
 	return 0;
 }
 
@@ -1083,8 +1004,9 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 				    const struct pci_device_id *id)
 {
 	struct rtsx_pcr *pcr;
+	struct pcr_handle *handle;
 	u32 base, len;
-	int ret;
+	int ret, i;
 
 	dev_dbg(&(pcidev->dev),
 		": Realtek PCI-E Card Reader found at %s [%04x:%04x] (rev %x)\n",
@@ -1105,19 +1027,26 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 		goto release_pci;
 	}
 
-	if (!idr_pre_get(&rtsx_pci_idr, GFP_KERNEL)) {
+	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
+	if (!handle) {
 		ret = -ENOMEM;
 		goto free_pcr;
+	}
+	handle->pcr = pcr;
+
+	if (!idr_pre_get(&rtsx_pci_idr, GFP_KERNEL)) {
+		ret = -ENOMEM;
+		goto free_handle;
 	}
 
 	spin_lock(&rtsx_pci_lock);
 	ret = idr_get_new(&rtsx_pci_idr, pcr, &pcr->id);
 	spin_unlock(&rtsx_pci_lock);
 	if (ret)
-		goto free_pcr;
+		goto free_handle;
 
 	pcr->pci = pcidev;
-	dev_set_drvdata(&pcidev->dev, pcr);
+	dev_set_drvdata(&pcidev->dev, handle);
 
 	len = pci_resource_len(pcidev, 0);
 	base = pci_resource_start(pcidev, 0);
@@ -1139,8 +1068,7 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 	pcr->host_sg_tbl_ptr = pcr->rtsx_resv_buf + HOST_CMDS_BUF_LEN;
 	pcr->host_sg_tbl_addr = pcr->rtsx_resv_buf_addr + HOST_CMDS_BUF_LEN;
 
-	pcr->need_reset = 0;
-	pcr->need_release = 0;
+	pcr->cd_detect = 0;
 	INIT_DELAYED_WORK(&pcr->carddet_work, rtsx_pci_card_detect);
 	INIT_DELAYED_WORK(&pcr->idle_work, rtsx_pci_idle_work);
 
@@ -1162,6 +1090,15 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 	if (ret < 0)
 		goto disable_irq;
 
+	for (i = 0; i < ARRAY_SIZE(rtsx_pcr_cells); i++) {
+		rtsx_pcr_cells[i].platform_data = handle;
+		rtsx_pcr_cells[i].pdata_size = sizeof(*handle);
+	}
+	ret = mfd_add_devices(&pcidev->dev, pcr->id, rtsx_pcr_cells,
+			ARRAY_SIZE(rtsx_pcr_cells), NULL, 0, NULL);
+	if (ret < 0)
+		goto disable_irq;
+
 	schedule_delayed_work(&pcr->idle_work, msecs_to_jiffies(200));
 
 	return 0;
@@ -1175,6 +1112,8 @@ unmap:
 	iounmap(pcr->remap_addr);
 free_host:
 	dev_set_drvdata(&pcidev->dev, NULL);
+free_handle:
+	kfree(handle);
 free_pcr:
 	kfree(pcr);
 release_pci:
@@ -1187,20 +1126,15 @@ disable:
 
 static void __devexit rtsx_pci_remove(struct pci_dev *pcidev)
 {
-	struct rtsx_pcr *pcr = pci_get_drvdata(pcidev);
-	int i;
+	struct pcr_handle *handle = pci_get_drvdata(pcidev);
+	struct rtsx_pcr *pcr = handle->pcr;
 
 	pcr->remove_pci = true;
 
 	cancel_delayed_work(&pcr->carddet_work);
 	cancel_delayed_work(&pcr->idle_work);
 
-	for (i = 0; i < pcr->num_slots; i++) {
-		if (pcr->slots[i].p_dev) {
-			platform_device_unregister(pcr->slots[i].p_dev);
-			pcr->slots[i].p_dev = NULL;
-		}
-	}
+	mfd_remove_devices(&pcidev->dev);
 
 	dma_free_coherent(&(pcr->pci->dev), RTSX_RESV_BUF_LEN,
 			pcr->rtsx_resv_buf, pcr->rtsx_resv_buf_addr);
@@ -1219,6 +1153,7 @@ static void __devexit rtsx_pci_remove(struct pci_dev *pcidev)
 
 	kfree(pcr->slots);
 	kfree(pcr);
+	kfree(handle);
 
 	dev_dbg(&(pcidev->dev),
 		": Realtek PCI-E Card Reader at %s [%04x:%04x] has been removed\n",
@@ -1229,12 +1164,14 @@ static void __devexit rtsx_pci_remove(struct pci_dev *pcidev)
 
 static int rtsx_pci_suspend(struct pci_dev *pcidev, pm_message_t state)
 {
+	struct pcr_handle *handle;
 	struct rtsx_pcr *pcr;
 	int ret = 0;
 
 	dev_dbg(&(pcidev->dev), "--> %s\n", __func__);
 
-	pcr = pci_get_drvdata(pcidev);
+	handle = pci_get_drvdata(pcidev);
+	pcr = handle->pcr;
 
 	cancel_delayed_work(&pcr->carddet_work);
 	cancel_delayed_work(&pcr->idle_work);
@@ -1261,12 +1198,14 @@ static int rtsx_pci_suspend(struct pci_dev *pcidev, pm_message_t state)
 
 static int rtsx_pci_resume(struct pci_dev *pcidev)
 {
+	struct pcr_handle *handle;
 	struct rtsx_pcr *pcr;
 	int ret = 0;
 
 	dev_dbg(&(pcidev->dev), "--> %s\n", __func__);
 
-	pcr = pci_get_drvdata(pcidev);
+	handle = pci_get_drvdata(pcidev);
+	pcr = handle->pcr;
 
 	mutex_lock(&pcr->pcr_mutex);
 

@@ -664,6 +664,10 @@ struct pcr_reg_val {
 
 struct rtsx_pcr;
 
+struct pcr_handle {
+	struct rtsx_pcr			*pcr;
+};
+
 struct pcr_ops {
 	int		(*extra_init_hw)(struct rtsx_pcr *pcr);
 	int		(*optimize_phy)(struct rtsx_pcr *pcr);
@@ -699,8 +703,7 @@ struct rtsx_pcr {
 	u32				bier;
 	char				trans_result;
 
-	int				need_reset;
-	int				need_release;
+	int				cd_detect;
 
 	struct delayed_work		carddet_work;
 	struct delayed_work		idle_work;

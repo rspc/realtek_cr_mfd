@@ -517,20 +517,32 @@ static int rtsx_pci_ms_resume(struct platform_device *pdev)
 
 #endif /* CONFIG_PM */
 
+static void rtsx_pci_ms_card_event(struct platform_device *pdev)
+{
+	struct realtek_pci_ms *host = platform_get_drvdata(pdev);
+
+	memstick_detect_change(host->msh);
+}
+
 static int rtsx_pci_ms_drv_probe(struct platform_device *pdev)
 {
 	struct memstick_host *msh;
 	struct realtek_pci_ms *host;
-	struct rtsx_pcr *pcr = platform_get_drvdata(pdev);
+	struct rtsx_pcr *pcr;
+	struct pcr_handle *handle = pdev->dev.platform_data;
 	int rc;
 
+	if (!handle)
+		return -ENXIO;
+
+	pcr = handle->pcr;
 	if (!pcr)
 		return -ENXIO;
 
 	dev_dbg(&(pdev->dev),
 			": Realtek PCI-E Memstick controller found\n");
 
-	msh = memstick_alloc_host(sizeof(*host), &pcr->pci->dev);
+	msh = memstick_alloc_host(sizeof(*host), &pdev->dev);
 	if (!msh)
 		return -ENOMEM;
 
@@ -539,6 +551,8 @@ static int rtsx_pci_ms_drv_probe(struct platform_device *pdev)
 	host->msh = msh;
 	host->pdev = pdev;
 	platform_set_drvdata(pdev, host);
+	pcr->slots[RTSX_MS_CARD].p_dev = pdev;
+	pcr->slots[RTSX_MS_CARD].card_event = rtsx_pci_ms_card_event;
 
 	mutex_init(&host->host_mutex);
 
@@ -567,6 +581,8 @@ static int rtsx_pci_ms_drv_remove(struct platform_device *pdev)
 		return 0;
 
 	pcr = host->pcr;
+	pcr->slots[RTSX_MS_CARD].p_dev = NULL;
+	pcr->slots[RTSX_MS_CARD].card_event = NULL;
 	msh = host->msh;
 	host->eject = true;
 
