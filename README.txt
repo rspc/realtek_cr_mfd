@@ -4,6 +4,7 @@ Realtek Driver-based Card Reader
 Supported chips:
 RTS5209
 RTS5229
+RTL8411
 
 Contact Email:
 pclinux@realsil.com.cn

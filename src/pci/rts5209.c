@@ -21,6 +21,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/delay.h>
 #include <linux/mfd/rtsx_pci.h>
 
 #include "rtsx_pcr.h"
@@ -48,6 +49,18 @@ static void rts5209_init_vendor_cfg(struct rtsx_pcr *pcr)
 	}
 }
 
+static int rts5209_extra_init_hw(struct rtsx_pcr *pcr)
+{
+	rtsx_pci_init_cmd(pcr);
+
+	/* Turn off LED */
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_GPIO, 0xFF, 0x03);
+	/* Configure GPIO as output */
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_GPIO_DIR, 0xFF, 0x03);
+
+	return rtsx_pci_send_cmd(pcr, 100);
+}
+
 static int rts5209_optimize_phy(struct rtsx_pcr *pcr)
 {
 	return rtsx_pci_write_phy_register(pcr, 0x00, 0xB966);
@@ -73,13 +86,74 @@ static int rts5209_disable_auto_blink(struct rtsx_pcr *pcr)
 	return rtsx_pci_write_register(pcr, CARD_AUTO_BLINK, 0x08, 0x00);
 }
 
+static int rts5209_card_power_on(struct rtsx_pcr *pcr, int card)
+{
+	int err;
+	u8 pwr_mask, partial_pwr_on, pwr_on;
+
+	pwr_mask = SD_POWER_MASK;
+	partial_pwr_on = SD_PARTIAL_POWER_ON;
+	pwr_on = SD_POWER_ON;
+
+	if (pcr->ms_pmos && (card == RTSX_MS_CARD)) {
+		pwr_mask = MS_POWER_MASK;
+		partial_pwr_on = MS_PARTIAL_POWER_ON;
+		pwr_on = MS_POWER_ON;
+	}
+
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
+			pwr_mask, partial_pwr_on);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			LDO3318_PWR_MASK, 0x04);
+	err = rtsx_pci_send_cmd(pcr, 100);
+	if (err < 0)
+		return err;
+
+	/* To avoid too large in-rush current */
+	udelay(150);
+
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL, pwr_mask, pwr_on);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			LDO3318_PWR_MASK, 0x00);
+	err = rtsx_pci_send_cmd(pcr, 100);
+	if (err < 0)
+		return err;
+
+	return 0;
+}
+
+static int rts5209_card_power_off(struct rtsx_pcr *pcr, int card)
+{
+	u8 pwr_mask, pwr_off;
+
+	pwr_mask = SD_POWER_MASK;
+	pwr_off = SD_POWER_OFF;
+
+	if (pcr->ms_pmos && (card == RTSX_MS_CARD)) {
+		pwr_mask = MS_POWER_MASK;
+		pwr_off = MS_POWER_OFF;
+	}
+
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
+			pwr_mask | PMOS_STRG_MASK, pwr_off | PMOS_STRG_400mA);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			LDO3318_PWR_MASK, 0X06);
+	return rtsx_pci_send_cmd(pcr, 100);
+}
+
 static const struct pcr_ops rts5209_pcr_ops = {
-	.extra_init_hw = NULL,
+	.extra_init_hw = rts5209_extra_init_hw,
 	.optimize_phy = rts5209_optimize_phy,
 	.turn_on_led = rts5209_turn_on_led,
 	.turn_off_led = rts5209_turn_off_led,
 	.enable_auto_blink = rts5209_enable_auto_blink,
 	.disable_auto_blink = rts5209_disable_auto_blink,
+	.card_power_on = rts5209_card_power_on,
+	.card_power_off = rts5209_card_power_off,
+	.cd_deglitch = NULL,
 };
 
 /* SD Pull Control Enable:
@@ -132,41 +206,6 @@ static const u32 rts5209_ms_pull_ctl_disable_tbl[] = {
 	0,
 };
 
-static const struct pcr_reg_val rts5209_rval1 = {
-	.ldo_pwr_mask = LDO3318_PWR_MASK,
-	.ldo_pwr_on = 0x00,
-	.ldo_pwr_off = 0x06,
-	.ldo_pwr_suspend = 0x04,
-
-	.sd_pwr_mask = SD_POWER_MASK,
-	.sd_partial_pwr_on = SD_PARTIAL_POWER_ON,
-	.sd_pwr_on = SD_POWER_ON,
-	.sd_pwr_off = SD_POWER_OFF,
-
-	/* MS card also uses SD power here */
-	.ms_pwr_mask = SD_POWER_MASK,
-	.ms_partial_pwr_on = SD_PARTIAL_POWER_ON,
-	.ms_pwr_on = SD_POWER_ON,
-	.ms_pwr_off = SD_POWER_OFF,
-};
-
-static const struct pcr_reg_val rts5209_rval2 = {
-	.ldo_pwr_mask = LDO3318_PWR_MASK,
-	.ldo_pwr_on = 0x00,
-	.ldo_pwr_off = 0x06,
-	.ldo_pwr_suspend = 0x04,
-
-	.sd_pwr_mask = SD_POWER_MASK,
-	.sd_partial_pwr_on = SD_PARTIAL_POWER_ON,
-	.sd_pwr_on = SD_POWER_ON,
-	.sd_pwr_off = SD_POWER_OFF,
-
-	.ms_pwr_mask = MS_POWER_MASK,
-	.ms_partial_pwr_on = MS_PARTIAL_POWER_ON,
-	.ms_pwr_on = MS_POWER_ON,
-	.ms_pwr_off = MS_POWER_OFF,
-};
-
 void rts5209_init_params(struct rtsx_pcr *pcr)
 {
 	pcr->extra_caps = EXTRA_CAPS_SD_SDR50 |
@@ -175,10 +214,6 @@ void rts5209_init_params(struct rtsx_pcr *pcr)
 	pcr->ops = &rts5209_pcr_ops;
 
 	rts5209_init_vendor_cfg(pcr);
-	if (pcr->ms_pmos)
-		pcr->rval = &rts5209_rval2;
-	else
-		pcr->rval = &rts5209_rval1;
 
 	pcr->ic_version = rts5209_get_ic_version(pcr);
 	pcr->sd_pull_ctl_enable_tbl = rts5209_sd_pull_ctl_enable_tbl;

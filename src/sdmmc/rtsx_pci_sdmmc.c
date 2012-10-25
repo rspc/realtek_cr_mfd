@@ -977,7 +977,7 @@ static int sdmmc_get_cd(struct mmc_host *mmc)
 	rtsx_pci_start_run(pcr);
 
 	/* Check SD card detect */
-	val = rtsx_pci_readl(pcr, RTSX_BIPR);
+	val = rtsx_pci_card_exist(pcr);
 	dev_dbg(sdmmc_dev(host), "%s: RTSX_BIPR = 0x%08x\n", __func__, val);
 	if (val & SD_EXIST)
 		cd = 1;

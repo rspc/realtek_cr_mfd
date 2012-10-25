@@ -24,8 +24,8 @@
 #include <linux/module.h>
 #include <linux/dma-mapping.h>
 #include <linux/highmem.h>
-#include <linux/delay.h>
 #include <linux/interrupt.h>
+#include <linux/delay.h>
 #include <linux/idr.h>
 #include <linux/platform_device.h>
 #include <linux/mfd/core.h>
@@ -53,6 +53,7 @@ static struct mfd_cell rtsx_pcr_cells[] = {
 static DEFINE_PCI_DEVICE_TABLE(rtsx_pci_ids) = {
 	{ PCI_DEVICE(0x10EC, 0x5209), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5229), PCI_CLASS_OTHERS << 16, 0xFF0000 },
+	{ PCI_DEVICE(0x10EC, 0x5289), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ 0, }
 };
 
@@ -685,40 +686,8 @@ EXPORT_SYMBOL_GPL(rtsx_pci_switch_clock);
 
 int rtsx_pci_card_power_on(struct rtsx_pcr *pcr, int card)
 {
-	int err;
-	u8 pwr_mask, partial_pwr_on, pwr_on;
-
-	if (card == RTSX_SD_CARD) {
-		pwr_mask = pcr->rval->sd_pwr_mask;
-		partial_pwr_on = pcr->rval->sd_partial_pwr_on;
-		pwr_on = pcr->rval->sd_pwr_on;
-	} else if (card == RTSX_MS_CARD) {
-		pwr_mask = pcr->rval->ms_pwr_mask;
-		partial_pwr_on = pcr->rval->ms_partial_pwr_on;
-		pwr_on = pcr->rval->ms_pwr_on;
-	} else {
-		return -EINVAL;
-	}
-
-	rtsx_pci_init_cmd(pcr);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
-			pwr_mask, partial_pwr_on);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
-			pcr->rval->ldo_pwr_mask, pcr->rval->ldo_pwr_suspend);
-	err = rtsx_pci_send_cmd(pcr, 100);
-	if (err < 0)
-		return err;
-
-	/* To avoid too large in-rush current */
-	udelay(150);
-
-	rtsx_pci_init_cmd(pcr);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL, pwr_mask, pwr_on);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
-			pcr->rval->ldo_pwr_mask, pcr->rval->ldo_pwr_on);
-	err = rtsx_pci_send_cmd(pcr, 100);
-	if (err < 0)
-		return err;
+	if (pcr->ops->card_power_on)
+		return pcr->ops->card_power_on(pcr, card);
 
 	return 0;
 }
@@ -726,26 +695,24 @@ EXPORT_SYMBOL_GPL(rtsx_pci_card_power_on);
 
 int rtsx_pci_card_power_off(struct rtsx_pcr *pcr, int card)
 {
-	u8 pwr_mask, pwr_off;
+	if (pcr->ops->card_power_off)
+		return pcr->ops->card_power_off(pcr, card);
 
-	if (card == RTSX_SD_CARD) {
-		pwr_mask = pcr->rval->sd_pwr_mask;
-		pwr_off = pcr->rval->sd_pwr_off;
-	} else if (card == RTSX_MS_CARD) {
-		pwr_mask = pcr->rval->ms_pwr_mask;
-		pwr_off = pcr->rval->ms_pwr_off;
-	} else {
-		return -EINVAL;
-	}
-
-	rtsx_pci_init_cmd(pcr);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
-			pwr_mask | PMOS_STRG_MASK, pwr_off | PMOS_STRG_400mA);
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
-			pcr->rval->ldo_pwr_mask, pcr->rval->ldo_pwr_off);
-	return rtsx_pci_send_cmd(pcr, 100);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(rtsx_pci_card_power_off);
+
+unsigned int rtsx_pci_card_exist(struct rtsx_pcr *pcr)
+{
+	unsigned int val;
+
+	val = rtsx_pci_readl(pcr, RTSX_BIPR);
+	if (pcr->ops->cd_deglitch)
+		val = pcr->ops->cd_deglitch(pcr);
+
+	return val;
+}
+EXPORT_SYMBOL_GPL(rtsx_pci_card_exist);
 
 void rtsx_pci_complete_unfinished_transfer(struct rtsx_pcr *pcr)
 {
@@ -771,10 +738,8 @@ static void rtsx_pci_card_detect(struct work_struct *work)
 	struct delayed_work *dwork;
 	struct rtsx_pcr *pcr;
 	unsigned long flags;
+	unsigned int card_detect = 0;
 	u32 irq_status;
-	void (*sd_card_event)(struct platform_device *p_dev) = NULL;
-	void (*ms_card_event)(struct platform_device *p_dev) = NULL;
-	struct platform_device *sd_pdev = NULL, *ms_pdev = NULL;
 
 	dwork = to_delayed_work(work);
 	pcr = container_of(dwork, struct rtsx_pcr, carddet_work);
@@ -786,28 +751,27 @@ static void rtsx_pci_card_detect(struct work_struct *work)
 	irq_status = rtsx_pci_readl(pcr, RTSX_BIPR);
 	dev_dbg(&(pcr->pci->dev), "irq_status: 0x%08x\n", irq_status);
 
-	if (pcr->cd_detect) {
-		dev_dbg(&(pcr->pci->dev), "cd_detect: 0x%x\n",
-				pcr->cd_detect);
+	if (pcr->card_inserted || pcr->card_removed) {
+		dev_dbg(&(pcr->pci->dev),
+				"card_inserted: 0x%x, card_removed: 0x%x\n",
+				pcr->card_inserted, pcr->card_removed);
 
-		if (pcr->cd_detect & SD_EXIST) {
-			sd_pdev = pcr->slots[RTSX_SD_CARD].p_dev;
-			sd_card_event = pcr->slots[RTSX_SD_CARD].card_event;
-		}
-		if (pcr->cd_detect & MS_EXIST) {
-			ms_pdev = pcr->slots[RTSX_MS_CARD].p_dev;
-			ms_card_event = pcr->slots[RTSX_MS_CARD].card_event;
-		}
+		if (pcr->ops->cd_deglitch)
+			pcr->card_inserted = pcr->ops->cd_deglitch(pcr);
 
-		pcr->cd_detect = 0;
+		card_detect = pcr->card_inserted | pcr->card_removed;
+		pcr->card_inserted = 0;
+		pcr->card_removed = 0;
 	}
 
 	spin_unlock_irqrestore(&pcr->lock, flags);
 
-	if (sd_card_event)
-		sd_card_event(sd_pdev);
-	if (ms_card_event)
-		ms_card_event(ms_pdev);
+	if (card_detect & SD_EXIST)
+		pcr->slots[RTSX_SD_CARD].card_event(
+				pcr->slots[RTSX_SD_CARD].p_dev);
+	if (card_detect & MS_EXIST)
+		pcr->slots[RTSX_MS_CARD].card_event(
+				pcr->slots[RTSX_MS_CARD].p_dev);
 }
 
 static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
@@ -834,12 +798,25 @@ static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
 
 	int_reg &= (pcr->bier | 0x7FFFFF);
 
-	if (int_reg & SD_INT)
-		pcr->cd_detect |= SD_EXIST;
-	if (int_reg & MS_INT)
-		pcr->cd_detect |= MS_EXIST;
+	if (int_reg & SD_INT) {
+		if (int_reg & SD_EXIST) {
+			pcr->card_inserted |= SD_EXIST;
+		} else {
+			pcr->card_removed |= SD_EXIST;
+			pcr->card_inserted &= ~SD_EXIST;
+		}
+	}
 
-	if (pcr->cd_detect)
+	if (int_reg & MS_INT) {
+		if (int_reg & MS_EXIST) {
+			pcr->card_inserted |= MS_EXIST;
+		} else {
+			pcr->card_removed |= MS_EXIST;
+			pcr->card_inserted &= ~MS_EXIST;
+		}
+	}
+
+	if (pcr->card_inserted || pcr->card_removed)
 		schedule_delayed_work(&pcr->carddet_work,
 				msecs_to_jiffies(200));
 
@@ -930,9 +907,20 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_CLK_EN, 0x1E, 0);
 	/* Reset ASPM state to default value */
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, ASPM_FORCE_CTL, 0x3F, 0);
+	/* Reset delink mode */
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CHANGE_LINK_STATE, 0x0A, 0);
 	/* Card driving select */
-	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD,
-			SD30_DRIVE_SEL, 0x07, DRIVER_TYPE_D);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SD30_DRIVE_SEL,
+			0x07, DRIVER_TYPE_D);
+	/* Enable SSC Clock */
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SSC_CTL1,
+			0xFF, SSC_8X_EN | SSC_SEL_4M);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SSC_CTL2, 0xFF, 0x12);
+	/* Disable cd_pwr_save */
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CHANGE_LINK_STATE, 0x16, 0x10);
+	/* Clear Link Ready Interrupt */
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, IRQSTAT0,
+			LINK_RDY_INT, LINK_RDY_INT);
 	/* Enlarge the estimation window of PERST# glitch
 	 * to reduce the chance of invalid card interrupt
 	 */
@@ -954,6 +942,11 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 	err = rtsx_pci_send_cmd(pcr, 100);
 	if (err < 0)
 		return err;
+
+	/* Enable clk_request_n to enable clock power management */
+	rtsx_pci_write_config_byte(pcr, 0x81, 1);
+	/* Enter L1 when host tx idle */
+	rtsx_pci_write_config_byte(pcr, 0x70F, 0x5B);
 
 	if (pcr->ops->extra_init_hw) {
 		err = pcr->ops->extra_init_hw(pcr);
@@ -979,6 +972,10 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 
 	case 0x5229:
 		rts5229_init_params(pcr);
+		break;
+
+	case 0x5289:
+		rtl8411_init_params(pcr);
 		break;
 	}
 
@@ -1068,7 +1065,8 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 	pcr->host_sg_tbl_ptr = pcr->rtsx_resv_buf + HOST_CMDS_BUF_LEN;
 	pcr->host_sg_tbl_addr = pcr->rtsx_resv_buf_addr + HOST_CMDS_BUF_LEN;
 
-	pcr->cd_detect = 0;
+	pcr->card_inserted = 0;
+	pcr->card_removed = 0;
 	INIT_DELAYED_WORK(&pcr->carddet_work, rtsx_pci_card_detect);
 	INIT_DELAYED_WORK(&pcr->idle_work, rtsx_pci_idle_work);
 

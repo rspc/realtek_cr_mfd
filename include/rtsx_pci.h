@@ -200,6 +200,28 @@
 /* CLK_CTL */
 #define CHANGE_CLK			0x01
 
+/* LDO_CTL */
+#define BPP_LDO_POWB			0x03
+#define BPP_LDO_ON			0x00
+#define BPP_LDO_SUSPEND			0x02
+#define BPP_LDO_OFF			0x03
+
+/* CD_PAD_CTL */
+#define CD_DISABLE_MASK			0x07
+#define MS_CD_DISABLE			0x04
+#define SD_CD_DISABLE			0x02
+#define XD_CD_DISABLE			0x01
+#define CD_DISABLE			0x07
+#define CD_ENABLE			0x00
+#define MS_CD_EN_ONLY			0x03
+#define SD_CD_EN_ONLY			0x05
+#define XD_CD_EN_ONLY			0x06
+#define FORCE_CD_LOW_MASK		0x38
+#define FORCE_CD_XD_LOW			0x08
+#define FORCE_CD_SD_LOW			0x10
+#define FORCE_CD_MS_LOW			0x20
+#define CD_AUTO_DISABLE			0x40
+
 /* SD_STAT1 */
 #define	SD_CRC7_ERR			0x80
 #define	SD_CRC16_ERR			0x40
@@ -459,6 +481,12 @@
 #define MS_PARTIAL_POWER_ON		0x04
 #define MS_POWER_ON			0x00
 #define MS_POWER_MASK			0x0C
+#define BPP_POWER_OFF			0x0F
+#define BPP_POWER_5_PERCENT_ON		0x0E
+#define BPP_POWER_10_PERCENT_ON		0x0C
+#define BPP_POWER_15_PERCENT_ON		0x08
+#define BPP_POWER_ON			0x00
+#define BPP_POWER_MASK			0x0F
 
 /* PWR_GATE_CTRL */
 #define PWR_GATE_EN			0x01
@@ -539,14 +567,12 @@
 #define CARD_AUTO_BLINK			0xFD56
 #define CARD_GPIO_DIR			0xFD57
 #define CARD_GPIO			0xFD58
-
 #define CARD_DATA_SOURCE		0xFD5B
 #define CARD_SELECT			0xFD5C
 #define SD30_DRIVE_SEL			0xFD5E
-
 #define CARD_CLK_EN			0xFD69
-
 #define SDIO_CTRL			0xFD6B
+#define CD_PAD_CTL			0xFD73
 
 #define FPDCTL				0xFC00
 #define PDINFO				0xFC01
@@ -565,6 +591,9 @@
 #define FPGA_PULL_CTL			0xFC1D
 #define OLT_LED_CTL			0xFC1E
 #define GPIO_CTL			0xFC1F
+
+#define LDO_CTL				0xFC1E
+#define SYS_VER				0xFC32
 
 #define CARD_PULL_CTL1			0xFD60
 #define CARD_PULL_CTL2			0xFD61
@@ -644,24 +673,6 @@
 
 #define rtsx_pci_init_cmd(pcr)		((pcr)->ci = 0)
 
-struct pcr_reg_val {
-	/* Enable signal for regulator3318 */
-	u8 ldo_pwr_mask;
-	u8 ldo_pwr_on;
-	u8 ldo_pwr_off;
-	u8 ldo_pwr_suspend;
-
-	/* Power control */
-	u8 sd_pwr_mask;
-	u8 sd_partial_pwr_on;
-	u8 sd_pwr_on;
-	u8 sd_pwr_off;
-	u8 ms_pwr_mask;
-	u8 ms_partial_pwr_on;
-	u8 ms_pwr_on;
-	u8 ms_pwr_off;
-};
-
 struct rtsx_pcr;
 
 struct pcr_handle {
@@ -675,6 +686,9 @@ struct pcr_ops {
 	int		(*turn_off_led)(struct rtsx_pcr *pcr);
 	int		(*enable_auto_blink)(struct rtsx_pcr *pcr);
 	int		(*disable_auto_blink)(struct rtsx_pcr *pcr);
+	int		(*card_power_on)(struct rtsx_pcr *pcr, int card);
+	int		(*card_power_off)(struct rtsx_pcr *pcr, int card);
+	unsigned int	(*cd_deglitch)(struct rtsx_pcr *pcr);
 };
 
 enum PDEV_STAT  {PDEV_STAT_IDLE, PDEV_STAT_RUN};
@@ -703,7 +717,8 @@ struct rtsx_pcr {
 	u32				bier;
 	char				trans_result;
 
-	int				cd_detect;
+	unsigned int			card_inserted;
+	unsigned int			card_removed;
 
 	struct delayed_work		carddet_work;
 	struct delayed_work		idle_work;
@@ -732,7 +747,6 @@ struct rtsx_pcr {
 #define IC_VER_D			3
 	u8				ic_version;
 
-	const struct pcr_reg_val	*rval;
 	const u32			*sd_pull_ctl_enable_tbl;
 	const u32			*sd_pull_ctl_disable_tbl;
 	const u32			*ms_pull_ctl_enable_tbl;
@@ -769,6 +783,7 @@ int rtsx_pci_switch_clock(struct rtsx_pcr *pcr, unsigned int card_clock,
 		u8 ssc_depth, bool initial_mode, bool double_clk, bool vpclk);
 int rtsx_pci_card_power_on(struct rtsx_pcr *pcr, int card);
 int rtsx_pci_card_power_off(struct rtsx_pcr *pcr, int card);
+unsigned int rtsx_pci_card_exist(struct rtsx_pcr *pcr);
 void rtsx_pci_complete_unfinished_transfer(struct rtsx_pcr *pcr);
 
 static inline u8 *rtsx_pci_get_cmd_data(struct rtsx_pcr *pcr)

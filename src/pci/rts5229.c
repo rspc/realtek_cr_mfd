@@ -21,6 +21,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/delay.h>
 #include <linux/mfd/rtsx_pci.h>
 
 #include "rtsx_pcr.h"
@@ -37,6 +38,8 @@ static int rts5229_extra_init_hw(struct rtsx_pcr *pcr)
 {
 	rtsx_pci_init_cmd(pcr);
 
+	/* Configure GPIO as output */
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, GPIO_CTL, 0x02, 0x02);
 	/* Switch LDO3318 source from DV33 to card_3v3 */
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, LDO_PWR_SEL, 0x03, 0x00);
 	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, LDO_PWR_SEL, 0x03, 0x01);
@@ -72,6 +75,45 @@ static int rts5229_disable_auto_blink(struct rtsx_pcr *pcr)
 	return rtsx_pci_write_register(pcr, OLT_LED_CTL, 0x08, 0x00);
 }
 
+static int rts5229_card_power_on(struct rtsx_pcr *pcr, int card)
+{
+	int err;
+
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
+			SD_POWER_MASK, SD_PARTIAL_POWER_ON);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			LDO3318_PWR_MASK, 0x02);
+	err = rtsx_pci_send_cmd(pcr, 100);
+	if (err < 0)
+		return err;
+
+	/* To avoid too large in-rush current */
+	udelay(150);
+
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
+			SD_POWER_MASK, SD_POWER_ON);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			LDO3318_PWR_MASK, 0x06);
+	err = rtsx_pci_send_cmd(pcr, 100);
+	if (err < 0)
+		return err;
+
+	return 0;
+}
+
+static int rts5229_card_power_off(struct rtsx_pcr *pcr, int card)
+{
+	rtsx_pci_init_cmd(pcr);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, CARD_PWR_CTL,
+			SD_POWER_MASK | PMOS_STRG_MASK,
+			SD_POWER_OFF | PMOS_STRG_400mA);
+	rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, PWR_GATE_CTRL,
+			LDO3318_PWR_MASK, 0X00);
+	return rtsx_pci_send_cmd(pcr, 100);
+}
+
 static const struct pcr_ops rts5229_pcr_ops = {
 	.extra_init_hw = rts5229_extra_init_hw,
 	.optimize_phy = rts5229_optimize_phy,
@@ -79,6 +121,9 @@ static const struct pcr_ops rts5229_pcr_ops = {
 	.turn_off_led = rts5229_turn_off_led,
 	.enable_auto_blink = rts5229_enable_auto_blink,
 	.disable_auto_blink = rts5229_disable_auto_blink,
+	.card_power_on = rts5229_card_power_on,
+	.card_power_off = rts5229_card_power_off,
+	.cd_deglitch = NULL,
 };
 
 /* SD Pull Control Enable:
@@ -141,30 +186,11 @@ static const u32 rts5229_ms_pull_ctl_disable_tbl[] = {
 	0,
 };
 
-static const struct pcr_reg_val rts5229_rval = {
-	.ldo_pwr_mask = LDO3318_PWR_MASK,
-	.ldo_pwr_on = 0x06,
-	.ldo_pwr_off = 0x00,
-	.ldo_pwr_suspend = 0x02,
-
-	.sd_pwr_mask = SD_POWER_MASK,
-	.sd_partial_pwr_on = SD_PARTIAL_POWER_ON,
-	.sd_pwr_on = SD_POWER_ON,
-	.sd_pwr_off = SD_POWER_OFF,
-
-	/* MS card also uses SD power here */
-	.ms_pwr_mask = SD_POWER_MASK,
-	.ms_partial_pwr_on = SD_PARTIAL_POWER_ON,
-	.ms_pwr_on = SD_POWER_ON,
-	.ms_pwr_off = SD_POWER_OFF,
-};
-
 void rts5229_init_params(struct rtsx_pcr *pcr)
 {
 	pcr->extra_caps = EXTRA_CAPS_SD_SDR50 | EXTRA_CAPS_SD_SDR104;
 	pcr->num_slots = 2;
 	pcr->ops = &rts5229_pcr_ops;
-	pcr->rval = &rts5229_rval;
 
 	pcr->ic_version = rts5229_get_ic_version(pcr);
 	if (pcr->ic_version == IC_VER_C) {

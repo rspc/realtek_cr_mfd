@@ -27,5 +27,6 @@
 
 void rts5209_init_params(struct rtsx_pcr *pcr);
 void rts5229_init_params(struct rtsx_pcr *pcr);
+void rtl8411_init_params(struct rtsx_pcr *pcr);
 
 #endif
