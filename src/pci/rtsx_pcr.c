@@ -55,6 +55,9 @@ static DEFINE_PCI_DEVICE_TABLE(rtsx_pci_ids) = {
 	{ PCI_DEVICE(0x10EC, 0x5209), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5229), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5289), PCI_CLASS_OTHERS << 16, 0xFF0000 },
+	{ PCI_DEVICE(0x10EC, 0x5227), PCI_CLASS_OTHERS << 16, 0xFF0000 },
+	{ PCI_DEVICE(0x10EC, 0x5249), PCI_CLASS_OTHERS << 16, 0xFF0000 },
+	{ PCI_DEVICE(0x10EC, 0x5287), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ 0, }
 };
 
@@ -707,6 +710,25 @@ int rtsx_pci_card_power_off(struct rtsx_pcr *pcr, int card)
 }
 EXPORT_SYMBOL_GPL(rtsx_pci_card_power_off);
 
+int rtsx_pci_card_exclusive_check(struct rtsx_pcr *pcr, int card)
+{
+	unsigned int cd_mask[] = {
+		[RTSX_SD_CARD] = SD_EXIST,
+		[RTSX_MS_CARD] = MS_EXIST
+	};
+
+	if (!pcr->ms_pmos) {
+		/* When using single PMOS, accessing card is not permitted
+		 * if the existing card is not the designated one.
+		 */
+		if (pcr->card_exist & (~cd_mask[card]))
+			return -EIO;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rtsx_pci_card_exclusive_check);
+
 int rtsx_pci_switch_output_voltage(struct rtsx_pcr *pcr, u8 voltage)
 {
 	if (pcr->ops->switch_output_voltage)
@@ -783,6 +805,9 @@ static void rtsx_pci_card_detect(struct work_struct *work)
 			card_inserted = pcr->ops->cd_deglitch(pcr);
 
 		card_detect = card_inserted | card_removed;
+
+		pcr->card_exist |= card_inserted;
+		pcr->card_exist &= ~card_removed;
 	}
 
 	mutex_unlock(&pcr->pcr_mutex);
@@ -975,6 +1000,14 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 			return err;
 	}
 
+	/* No CD interrupt if probing driver with card inserted.
+	 * So we need to initialize pcr->card_exist here.
+	 */
+	if (pcr->ops->cd_deglitch)
+		pcr->card_exist = pcr->ops->cd_deglitch(pcr);
+	else
+		pcr->card_exist = rtsx_pci_readl(pcr, RTSX_BIPR) & CARD_EXIST;
+
 	return 0;
 }
 
@@ -998,6 +1031,18 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 	case 0x5289:
 		rtl8411_init_params(pcr);
 		break;
+
+	case 0x5227:
+		rts5227_init_params(pcr);
+		break;
+
+	case 0x5249:
+		rts5249_init_params(pcr);
+		break;
+
+	case 0x5287:
+		rtl8411b_init_params(pcr);
+		break;
 	}
 
 	dev_dbg(&(pcr->pci->dev), "PID: 0x%04x, IC version: 0x%02x\n",
@@ -1018,8 +1063,8 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 	return 0;
 }
 
-static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
-				    const struct pci_device_id *id)
+static int rtsx_pci_probe(struct pci_dev *pcidev,
+			  const struct pci_device_id *id)
 {
 	struct rtsx_pcr *pcr;
 	struct pcr_handle *handle;
@@ -1056,15 +1101,14 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 	}
 	handle->pcr = pcr;
 
-	if (!idr_pre_get(&rtsx_pci_idr, GFP_KERNEL)) {
-		ret = -ENOMEM;
-		goto free_handle;
-	}
-
+	idr_preload(GFP_KERNEL);
 	spin_lock(&rtsx_pci_lock);
-	ret = idr_get_new(&rtsx_pci_idr, pcr, &pcr->id);
+	ret = idr_alloc(&rtsx_pci_idr, pcr, 0, 0, GFP_NOWAIT);
+	if (ret >= 0)
+		pcr->id = ret;
 	spin_unlock(&rtsx_pci_lock);
-	if (ret)
+	idr_preload_end();
+	if (ret < 0)
 		goto free_handle;
 
 	pcr->pci = pcidev;
@@ -1104,7 +1148,7 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 
 	ret = rtsx_pci_acquire_irq(pcr);
 	if (ret < 0)
-		goto free_dma;
+		goto disable_msi;
 
 	pci_set_master(pcidev);
 	synchronize_irq(pcr->irq);
@@ -1128,7 +1172,9 @@ static int __devinit rtsx_pci_probe(struct pci_dev *pcidev,
 
 disable_irq:
 	free_irq(pcr->irq, (void *)pcr);
-free_dma:
+disable_msi:
+	if (pcr->msi_en)
+		pci_disable_msi(pcr->pci);
 	dma_free_coherent(&(pcr->pci->dev), RTSX_RESV_BUF_LEN,
 			pcr->rtsx_resv_buf, pcr->rtsx_resv_buf_addr);
 unmap:
@@ -1147,7 +1193,7 @@ disable:
 	return ret;
 }
 
-static void __devexit rtsx_pci_remove(struct pci_dev *pcidev)
+static void rtsx_pci_remove(struct pci_dev *pcidev)
 {
 	struct pcr_handle *handle = pci_get_drvdata(pcidev);
 	struct rtsx_pcr *pcr = handle->pcr;
@@ -1265,7 +1311,7 @@ static struct pci_driver rtsx_pci_driver = {
 	.name = DRV_NAME_RTSX_PCI,
 	.id_table = rtsx_pci_ids,
 	.probe = rtsx_pci_probe,
-	.remove = __devexit_p(rtsx_pci_remove),
+	.remove = rtsx_pci_remove,
 	.suspend = rtsx_pci_suspend,
 	.resume = rtsx_pci_resume,
 };
